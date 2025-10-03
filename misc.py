@@ -1,0 +1,140 @@
+import os
+import shutil
+
+from tqdm import tqdm
+
+
+def copy_files():
+    src_pth = '/vidgen2/vatsal/classifier/data/data/s3_cluster/data/filter_face_dataset/s3_cluster'
+    dest_pth_tr = '/vidgen2/vatsal/classifier/data/filtered_data/train/human'
+    dest_pth_te = '/vidgen2/vatsal/classifier/data/filtered_data/test/human'
+
+    c = 0
+    dirs = os.listdir(src_pth)
+    # n in test
+    n = 1200
+    train_dirs = dirs[n:]
+    test_dirs = dirs[:n]
+
+    for d in train_dirs:
+        files = os.listdir(os.path.join(src_pth, d))
+        for f in files:
+            shutil.move(os.path.join(src_pth, d, f), os.path.join(dest_pth_tr, f))
+            c += 1
+
+    print(f"Train files: {c}")
+    c = 0
+    for d in tqdm(test_dirs):
+        files = os.listdir(os.path.join(src_pth, d))
+        for f in files:
+            shutil.move(os.path.join(src_pth, d, f), os.path.join(dest_pth_te, f))
+            c += 1
+
+    print(f"Test files: {c}")
+
+
+def download_dataset():
+    import boto3
+    import os
+    from botocore.config import Config
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    def download_file_from_r2(s3, bucket_name, file_key, download_path):
+        """Download a single file from R2 with safety checks."""
+        try:
+            file_info = s3.head_object(Bucket=bucket_name, Key=file_key)
+            file_size = file_info['ContentLength']
+
+            os.makedirs(os.path.dirname(download_path), exist_ok=True)
+            statvfs = os.statvfs(os.path.dirname(download_path))
+            free_space = statvfs.f_bavail * statvfs.f_frsize
+
+            if file_size > free_space:
+                print(f"❌ Insufficient storage. "
+                      f"File size: {file_size / (1024 ** 3):.2f} GB, "
+                      f"Free space: {free_space / (1024 ** 3):.2f} GB.")
+                return
+
+            # print(f"⬇️ Downloading {file_key} → {download_path}")
+            s3.download_file(bucket_name, file_key, download_path)
+            # print(f"✅ Downloaded {download_path}")
+
+        except ClientError as e:
+            print(f"❌ Client error for {file_key}: {e.response['Error']['Message']}")
+        except BotoCoreError as e:
+            print(f"❌ BotoCore error for {file_key}: {str(e)}")
+        except Exception as e:
+            print(f"❌ Unexpected error for {file_key}: {str(e)}")
+
+    def list_files(s3, bucket_name, prefix):
+        """List all files under a given prefix."""
+        files = []
+        continuation_token = None
+
+        while True:
+            if continuation_token:
+                resp = s3.list_objects_v2(
+                    Bucket=bucket_name,
+                    Prefix=prefix,
+                    ContinuationToken=continuation_token
+                )
+            else:
+                resp = s3.list_objects_v2(
+                    Bucket=bucket_name,
+                    Prefix=prefix
+                )
+
+            contents = resp.get("Contents", [])
+            for item in contents:
+                files.append(item["Key"])
+
+            if resp.get("IsTruncated"):  # More files available
+                continuation_token = resp["NextContinuationToken"]
+            else:
+                break
+
+        return files
+
+    def download_directories(access_key, secret_key, endpoint_url, bucket_name, base_dir, dirs):
+        """Download all files from the given list of directories in R2."""
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            endpoint_url=endpoint_url,
+            region_name='auto',
+            config=Config(signature_version="s3v4")
+        )
+
+        for d in dirs:
+            prefix = f"Web260M/{d}/"
+            # print(f"\n📂 Listing files in {prefix}")
+            # print(f"Dir {d}/{len(dirs)}")
+            keys = list_files(s3, bucket_name, prefix)
+
+            if not keys:
+                print(f"⚠️ No files found in {prefix}")
+                continue
+
+            for key in tqdm(keys, desc=f"Dir {d}/{len(dirs)}"):
+                fname = os.path.basename(key)
+                download_path = os.path.join(base_dir, str(d), fname)
+                download_file_from_r2(s3, bucket_name, key, download_path)
+
+    download_directories(ACCESS_KEY, SECRET_KEY, R2_ENDPOINT, BUCKET_NAME, BASE_DIR, DIRS)
+
+
+if __name__ == '__main__':
+    # Parameters
+    ACCESS_KEY = "04f041b37bfeb0c8cec3aaf1240c23af"
+    SECRET_KEY = "e03c7f4047532fb555b9875359f819a1ee8e38c9ce61e141dfcedf2adf6eb636"
+    R2_ENDPOINT = "https://afe587cdadc5c79bf6fd36fbfb4e7ac5.r2.cloudflarestorage.com"
+
+    BUCKET_NAME = "datasets"  # only bucket name
+    BASE_DIR = '/vidgen2/vatsal/classifier/data/webface'  # where to save
+
+    DIRS = list(
+        range(3))  # download 0–9 folders, which means 0 is web4m,  0 to 2 is Web12m and 0 to 9 is web42m(web260m)
+
+    # copy_files()
+    download_dataset()
