@@ -18,7 +18,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 RUN pip install uv
 
 #Set the working directory inside the container
-WORKDIR /classifier
+WORKDIR /vidgen2/classifier
 
 #Copy the uv project and lock files to leverage Docker layer caching
 COPY ../pyproject.toml ./
