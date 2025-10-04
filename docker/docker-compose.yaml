@@ -21,6 +21,9 @@ services:
     # This means code changes you make locally are immediately reflected inside the container.
     volumes:
       - ../.:/vidgen2/classifier
+      - ../.venv:/vidgen2/classifier/.venv
+      - ../pyproject.toml:/vidgen2/classifier/pyproject.toml
+      - ../uv.lock:/vidgen2/classifier/uv.lock
     # GPU configuration to grant the container access to all available GPUs
     deploy:
       resources:
