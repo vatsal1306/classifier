@@ -1,7 +1,7 @@
 import torch
 
 # --- DATASET & DATALOADER ---
-DATA_DIR = "dataset/processed"  # Directory where the processed shards are stored
+DATA_DIR = "dataset/filtered_data"  # Directory where the processed shards are stored
 TRAIN_BATCH_SIZE = 64  # Batch size for training (32 human, 32 non-human)
 TEST_BATCH_SIZE = 64  # Batch size for validation/testing
 
