@@ -86,7 +86,7 @@ def main():
     os.makedirs(checkpoints_dir, exist_ok=True)
 
     # Copy config file for reproducibility
-    shutil.copy("config.py", os.path.join(run_dir, "config.py"))
+    shutil.copy("src/config.py", os.path.join(run_dir, "config.py"))
 
     # --- Setup Logger ---
     setup_logger(os.path.join(run_dir, "train.log"))
