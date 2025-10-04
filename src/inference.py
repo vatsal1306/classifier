@@ -1,59 +1,70 @@
 import argparse
 import os
 
+import cv2
+import numpy as np
 import torch
-import webdataset as wds
-from PIL import Image, ImageDraw, ImageFont
+from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 
 import config as default_config
-from src.data.transformations import get_test_transforms  # For single image inference
+from src.data.dataloader import ImageClassDataset
+from src.data.transformations import get_test_transforms
 from src.models import get_model
 
 
 def visualize_mistakes(mistakes, output_path, grid_size=5):
     """
-    Creates and saves a collage of the most confident misclassified images.
+    Creates and saves a collage of misclassified images using OpenCV.
     """
     if not mistakes:
         print("No mistakes to visualize.")
         return
 
-    # Sort mistakes by confidence (descending)
     mistakes.sort(key=lambda x: x[2], reverse=True)
-
     num_images = min(len(mistakes), grid_size * grid_size)
+    if num_images == 0:
+        return
 
-    # Create a grid to hold the images
-    img_size = mistakes[0][0].size[0]
-    grid_img_size = grid_size * img_size
-    grid_image = Image.new('RGB', (grid_img_size, grid_img_size), 'white')
-    draw = ImageDraw.Draw(grid_image)
+    # Assuming all images are the same size, get size from the first one
+    img_h, img_w, _ = mistakes[0][0].shape
 
-    try:
-        font = ImageFont.truetype("arial.ttf", 14)
-    except IOError:
-        font = ImageFont.load_default()
+    # Create a blank white grid to hold the images
+    grid_img_h = grid_size * img_h
+    grid_img_w = grid_size * img_w
+    grid_image = np.full((grid_img_h, grid_img_w, 3), 255, dtype=np.uint8)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.5
+    font_color = (0, 0, 255)  # Red in BGR
+    font_thickness = 1
 
     for i in range(num_images):
-        image, true_label, confidence = mistakes[i]
+        image_rgb, true_label, confidence, pred_label = mistakes[i]
+
+        # Resize image to fit the grid cell
+        resized_image_rgb = cv2.resize(image_rgb, (img_w, img_h))
+        # Convert to BGR for OpenCV text and drawing functions
+        image_bgr = cv2.cvtColor(resized_image_rgb, cv2.COLOR_RGB2BGR)
 
         row = i // grid_size
         col = i % grid_size
+        y_offset, x_offset = row * img_h, col * img_w
 
         # Paste image onto the grid
-        grid_image.paste(image, (col * img_size, row * img_size))
+        grid_image[y_offset:y_offset + img_h, x_offset:x_offset + img_w] = image_bgr
 
-        # Add text
-        true_text = "True: Human" if true_label == 1 else "True: Non-Human"
-        pred_text = "Pred: Non-Human" if true_label == 1 else "Pred: Human"
-        conf_text = f"Conf: {confidence:.2f}"
+        # Prepare text to draw
+        true_text = "T: Human" if true_label == 1 else "T: Non-Human"
+        pred_text = "P: Human" if pred_label == 1 else "P: Non-Human"
+        conf_text = f"C: {confidence:.2f}"
 
-        draw.text((col * img_size + 5, row * img_size + 5), true_text, fill="red", font=font)
-        draw.text((col * img_size + 5, row * img_size + 20), pred_text, fill="red", font=font)
-        draw.text((col * img_size + 5, row * img_size + 35), conf_text, fill="red", font=font)
+        # Add text to the image
+        cv2.putText(grid_image, true_text, (x_offset + 5, y_offset + 15), font, font_scale, font_color, font_thickness)
+        cv2.putText(grid_image, pred_text, (x_offset + 5, y_offset + 35), font, font_scale, font_color, font_thickness)
+        cv2.putText(grid_image, conf_text, (x_offset + 5, y_offset + 55), font, font_scale, font_color, font_thickness)
 
-    grid_image.save(output_path)
+    cv2.imwrite(output_path, grid_image)
     print(f"Mistakes collage saved to {output_path}")
 
 
@@ -61,77 +72,66 @@ def run_inference(checkpoint_path, data_dir, output_dir):
     """
     Runs inference on the test set, calculates accuracy, and visualizes mistakes.
     """
-    # --- Setup ---
     device = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- Load Model ---
     print(f"Loading model from {checkpoint_path}")
     model = get_model(default_config.MODEL_NAME, pretrained=False, num_classes=default_config.OUTPUT_FEATURES)
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.to(device)
     model.eval()
 
-    # --- Dataloader ---
-    # We create a temporary config to point the dataloader to the right place
-    class InferenceConfig:
-        DATA_DIR = data_dir
-        TEST_BATCH_SIZE = default_config.TEST_BATCH_SIZE
-
     print("Building test dataloader...")
-    # This requires a custom WebDataset pipeline for inference to get original images
-    test_urls = [
-        os.path.join(data_dir, "test/human", "shard-*.tar"),
-        os.path.join(data_dir, "test/non_human", "shard-*.tar")
-    ]
-
-    # Create a pipeline that keeps the original image for visualization
-    preproc = get_test_transforms()
-    dataset = (
-        wds.WebDataset(test_urls)
-        .decode("pil")
-        .to_tuple("jpg;png", "cls")
-        .map_tuple(lambda img: (preproc(img), img), lambda x: torch.tensor(int(x.decode())))
-        # (transformed_img, original_img), label
+    # Use return_numpy=True to get original images for visualization
+    human_dataset = ImageClassDataset(
+        os.path.join(data_dir, "test", "human"), label=1, transform=get_test_transforms(), return_numpy=True
     )
+    non_human_dataset = ImageClassDataset(
+        os.path.join(data_dir, "test", "non_human"), label=0, transform=get_test_transforms(), return_numpy=True
+    )
+    test_dataset = ConcatDataset([human_dataset, non_human_dataset])
+    dataloader = DataLoader(test_dataset, batch_size=default_config.TEST_BATCH_SIZE, shuffle=False, num_workers=4)
 
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=InferenceConfig.TEST_BATCH_SIZE, num_workers=4)
-
-    # --- Inference Loop ---
     correct_predictions = 0
     total_samples = 0
     mistakes = []
 
     print("Running inference...")
     with torch.no_grad():
-        for (transformed_images, original_images), labels in tqdm(dataloader, desc="Inference"):
-            transformed_images = transformed_images.to(device)
+        for images_tensor, labels, original_images_numpy in tqdm(dataloader, desc="Inference"):
+            images_tensor = images_tensor.to(device)
             labels = labels.to(device).float().unsqueeze(1)
 
-            outputs = model(transformed_images)
+            outputs = model(images_tensor)
             probs = torch.sigmoid(outputs)
             preds = (probs > 0.5).float()
 
             correct_predictions += (preds == labels).sum().item()
             total_samples += labels.size(0)
 
-            # Find mistakes
             misclassified_mask = (preds != labels).squeeze()
-            if misclassified_mask.any():
-                misclassified_imgs = [img for i, img in enumerate(original_images) if misclassified_mask[i]]
-                misclassified_labels = labels[misclassified_mask]
-                misclassified_probs = probs[misclassified_mask]
+            if misclassified_mask.any().item():
+                if misclassified_mask.dim() == 0:
+                    misclassified_mask = misclassified_mask.unsqueeze(0)
 
-                for img, true_label, prob in zip(misclassified_imgs, misclassified_labels, misclassified_probs):
-                    confidence = prob.item() if pred == 1 else 1 - prob.item()
-                    mistakes.append((img, int(true_label.item()), confidence))
+                misclassified_indices = torch.where(misclassified_mask)[0]
 
-    # --- Results ---
-    accuracy = correct_predictions / total_samples
-    print(f"\n--- Inference Complete ---")
-    print(f"Accuracy on Test Set: {accuracy:.4f}")
+                for idx in misclassified_indices:
+                    # Convert tensor back to numpy array for cv2
+                    original_img = original_images_numpy[idx].numpy()
+                    true_label = int(labels[idx].item())
+                    pred_label = int(preds[idx].item())
+                    prob = probs[idx].item()
+                    confidence = prob if pred_label == 1 else 1 - prob
+                    mistakes.append((original_img, true_label, confidence, pred_label))
 
-    # --- Visualize ---
+    if total_samples > 0:
+        accuracy = correct_predictions / total_samples
+        print(f"\n--- Inference Complete ---")
+        print(f"Accuracy on Test Set: {accuracy:.4f}")
+    else:
+        print("No samples found in the test set.")
+
     visualize_mistakes(mistakes, os.path.join(output_dir, "worst_mistakes.jpg"))
 
 
@@ -144,5 +144,4 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="inference_results",
                         help="Directory to save inference results.")
     args = parser.parse_args()
-
     run_inference(args.checkpoint, args.data_dir, args.output_dir)

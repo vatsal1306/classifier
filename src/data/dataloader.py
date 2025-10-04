@@ -1,65 +1,164 @@
+import glob
+import logging
 import os
+import random
+from itertools import cycle
 
+import cv2
 import torch
-import webdataset as wds
+from torch.utils.data import Dataset, DataLoader, Sampler, ConcatDataset
 
 from src.data.transformations import get_train_transforms, get_test_transforms
+
+# Get a logger instance for this module. It will inherit the root logger's configuration.
+logger = logging.getLogger(__name__)
+
+
+class ImageClassDataset(Dataset):
+    """
+    A PyTorch Dataset for loading images using OpenCV from a single class folder.
+    """
+
+    def __init__(self, root_dir, label, transform=None, return_numpy=False):
+        """
+        Args:
+            root_dir (str): Directory with all the images for one class.
+            label (int): The label to assign to all images in this dataset.
+            transform (callable, optional): Albumentations transform to be applied.
+            return_numpy (bool): If True, __getitem__ returns the original numpy image.
+        """
+        self.image_paths = glob.glob(os.path.join(root_dir, '**', '*.[jJ][pP]*[gG]'), recursive=True) + \
+                           glob.glob(os.path.join(root_dir, '**', '*.[pP][nN][gG]'), recursive=True)
+        self.label = label
+        self.transform = transform
+        self.return_numpy = return_numpy
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        # Read image with OpenCV
+        image_bgr = cv2.imread(img_path)
+        if image_bgr is None:
+            logger.warning(f"Could not read image {img_path}. Returning a dummy tensor.")
+            # Return a dummy sample, which can be filtered out later if needed
+            return torch.randn(3, 224, 224), self.label
+
+        # Convert from BGR to RGB color space
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+        if self.transform:
+            # Albumentations expects a dictionary
+            transformed = self.transform(image=image_rgb)
+            image_tensor = transformed['image']
+        else:
+            # Fallback: convert numpy array to tensor and normalize
+            image_tensor = torch.from_numpy(image_rgb.transpose((2, 0, 1))).float().div(255)
+
+        if self.return_numpy:
+            return image_tensor, self.label, image_rgb
+        else:
+            return image_tensor, self.label
+
+
+class BalancedBatchSampler(Sampler):
+    """
+    A custom PyTorch Sampler to create balanced batches.
+    It ensures each batch has an equal number of samples from two datasets.
+    It oversamples the minority class to match the majority class.
+    """
+
+    def __init__(self, majority_indices, minority_indices, batch_size):
+        """
+        Args:
+            majority_indices (list): List of indices for the majority class dataset.
+            minority_indices (list): List of indices for the minority class dataset.
+            batch_size (int): The total batch size. Must be an even number.
+        """
+        super().__init__()
+        if batch_size % 2 != 0:
+            raise ValueError("batch_size must be an even number for balanced sampling.")
+
+        self.majority_indices = majority_indices
+        self.minority_indices = minority_indices
+        self.batch_size = batch_size
+        self.half_batch = batch_size // 2
+
+    def __iter__(self):
+        # Shuffle both lists of indices
+        random.shuffle(self.majority_indices)
+        random.shuffle(self.minority_indices)
+
+        # Use itertools.cycle to endlessly loop over the minority indices
+        minority_iterator = cycle(self.minority_indices)
+
+        # Iterate through the majority indices in chunks of half_batch
+        for i in range(0, len(self.majority_indices), self.half_batch):
+            majority_batch_indices = self.majority_indices[i: i + self.half_batch]
+
+            # If the last majority chunk is smaller than half_batch, we skip it.
+            if len(majority_batch_indices) < self.half_batch:
+                break
+
+            minority_batch_indices = [next(minority_iterator) for _ in range(self.half_batch)]
+
+            # Combine and shuffle the batch indices
+            batch_indices = majority_batch_indices + minority_batch_indices
+            random.shuffle(batch_indices)
+            yield batch_indices
+
+    def __len__(self):
+        # The number of batches is determined by the majority class
+        return len(self.majority_indices) // self.half_batch
 
 
 def build_dataloader(split, config):
     """
-    Builds a WebDataset-based DataLoader with balanced sampling for the 'train' split.
-
-    Args:
-        split (str): The dataset split to load ('train' or 'test').
-        config: The configuration object.
-
-    Returns:
-        torch.utils.data.DataLoader: The configured DataLoader.
+    Builds a standard PyTorch DataLoader. For the 'train' split, it uses
+    a custom BalancedBatchSampler to ensure 50/50 class distribution in each batch.
     """
     if split not in ['train', 'test']:
         raise ValueError(f"Invalid split name: {split}. Must be 'train' or 'test'.")
 
-    # Define paths to the class-specific shard directories
-    human_path = os.path.join(config.DATA_DIR, split, "human", "shard-*.tar")
-    non_human_path = os.path.join(config.DATA_DIR, split, "non_human", "shard-*.tar")
+    human_path = os.path.join(config.DATA_DIR, split, "human")
+    non_human_path = os.path.join(config.DATA_DIR, split, "non_human")
+
+    # Create datasets for each class
+    transform = get_train_transforms() if split == 'train' else get_test_transforms()
+    human_dataset = ImageClassDataset(human_path, label=1, transform=transform)
+    non_human_dataset = ImageClassDataset(non_human_path, label=0, transform=transform)
 
     if split == 'train':
-        # --- Balanced Sampling for Training ---
-        # Create separate datasets for each class
-        human_dataset = wds.WebDataset(human_path).shuffle(1000)
-        non_human_dataset = wds.WebDataset(non_human_path).shuffle(1000)
+        # Determine majority and minority classes
+        if len(human_dataset) >= len(non_human_dataset):
+            majority_ds, minority_ds = human_dataset, non_human_dataset
+        else:
+            majority_ds, minority_ds = non_human_dataset, human_dataset
 
-        # Combine them using 'Shorter' to ensure they yield samples in lockstep
-        # and 'zip' to create pairs (human_sample, non_human_sample)
-        # 'concat' then flattens these pairs into a single stream for the dataloader
-        combined_dataset = wds.Shorter([human_dataset, non_human_dataset]).zip().concat()
+        # The sampler needs indices relative to the concatenated dataset
+        majority_indices = list(range(len(majority_ds)))
+        minority_indices = list(range(len(majority_ds), len(majority_ds) + len(minority_ds)))
 
-        # Apply the training transformations
-        dataset = combined_dataset.decode("pil").to_tuple("jpg;png", "cls").map_tuple(get_train_transforms(),
-                                                                                      lambda x: torch.tensor(
-                                                                                          int(x.decode()))).shuffle(
-            2000)
+        full_dataset = ConcatDataset([majority_ds, minority_ds])
 
-        batch_size = config.TRAIN_BATCH_SIZE
-        # Ensure batch size is even for perfect 50/50 split
-        if batch_size % 2 != 0:
-            raise ValueError("TRAIN_BATCH_SIZE must be an even number for balanced sampling.")
+        batch_sampler = BalancedBatchSampler(majority_indices, minority_indices, config.TRAIN_BATCH_SIZE)
 
+        dataloader = DataLoader(
+            full_dataset,
+            batch_sampler=batch_sampler,
+            num_workers=4,
+            pin_memory=True
+        )
     else:  # 'test' split
-        # --- Standard Sampling for Testing ---
-        # For validation, we can just combine the datasets
-        dataset_urls = [human_path, non_human_path]
-        dataset = wds.WebDataset(dataset_urls).shuffle(1000).decode("pil").to_tuple("jpg;png", "cls").map_tuple(
-            get_test_transforms(), lambda x: torch.tensor(int(x.decode())))
-        batch_size = config.TEST_BATCH_SIZE
-
-    # Create the DataLoader
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        num_workers=4,
-        pin_memory=True
-    )
+        # For validation, a standard shuffled dataloader is fine.
+        full_dataset = ConcatDataset([human_dataset, non_human_dataset])
+        dataloader = DataLoader(
+            full_dataset,
+            batch_size=config.TEST_BATCH_SIZE,
+            shuffle=True,
+            num_workers=4,
+            pin_memory=True
+        )
 
     return dataloader
