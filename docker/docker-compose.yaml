@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  ml-dev:
+    # Build the Docker image from the Dockerfile in the current directory
+    build: docker/
+    image: classifier_image:latest
+    # Set a consistent name for the container
+    container_name: classifier_container
+    # Always restart the container if it stops
+    restart: always
+    # Keep STDIN open, which is necessary for 'docker exec'
+    tty: true
+    # --- NEW: Set shared memory size to 20GB ---
+    shm_size: '30g'
+    # --- NEW: Use the host's network ---
+    network_mode: "host"
+    # Mount the current directory on your host to /app in the container.
+    # This means code changes you make locally are immediately reflected inside the container.
+    volumes:
+      - .:/classifier
+    # GPU configuration to grant the container access to all available GPUs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
