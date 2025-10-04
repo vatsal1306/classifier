@@ -3,7 +3,7 @@ version: '3.8'
 services:
   ml-dev:
     # Build the Docker image from the Dockerfile in the current directory
-    build: docker/
+    build: .
     image: classifier_image:latest
     # Set a consistent name for the container
     container_name: classifier_container
