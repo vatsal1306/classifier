@@ -3,4 +3,4 @@ pillow==11.3.0
 torch==2.8.0
 torchvision==0.23.0
 tqdm==4.67.1
-webdataset==1.0.2
+webdataset==0.1.103
