@@ -24,7 +24,8 @@ RUN pip install uv
 WORKDIR /classifier
 
 #Copy the uv project and lock files to leverage Docker layer caching
-COPY ../pyproject.toml ../uv.lock ./
+COPY ../pyproject.toml ./
+COPY ../uv.lock ./
 
 # Install Python packages using uv sync.
 # 'uv sync' is the command to install dependencies from a uv.lock file,
