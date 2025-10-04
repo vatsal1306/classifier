@@ -15,19 +15,19 @@ RUN apt-get update &&  \
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 #Install uv, the fast Python package installer
-RUN pip install uv
+#RUN pip install uv
 
 #Set the working directory inside the container
 WORKDIR /vidgen2/classifier
 
 #Copy the uv project and lock files to leverage Docker layer caching
-COPY ../pyproject.toml ./
-COPY ../uv.lock ./
-
+#COPY ../pyproject.toml ./
+#COPY ../uv.lock ./
+COPY ../requirements.txt ./
 # Install Python packages using uv sync.
 # 'uv sync' is the command to install dependencies from a uv.lock file,
 #ensuring a reproducible environment. '--frozen' prevents any changes to the lock file.
-RUN uv sync --frozen
+RUN pip install -r requirements.txt
 
 #Copy the rest of the project code into the working directory.
 #Note: This is for the initial build. The docker-compose file will mount

@@ -14,16 +14,13 @@ services:
     # Keep STDIN open, which is necessary for 'docker exec'
     tty: true
     # --- NEW: Set shared memory size to 20GB ---
-    shm_size: '30g'
+    shm_size: '80g'
     # --- NEW: Use the host's network ---
     network_mode: "host"
     # Mount the current directory on your host to /app in the container.
     # This means code changes you make locally are immediately reflected inside the container.
     volumes:
       - ../.:/vidgen2/classifier
-      - ../.venv:/vidgen2/classifier/.venv
-      - ../pyproject.toml:/vidgen2/classifier/pyproject.toml
-      - ../uv.lock:/vidgen2/classifier/uv.lock
     # GPU configuration to grant the container access to all available GPUs
     deploy:
       resources:
