@@ -8,10 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 #Install system dependencies, Python, and pip
 RUN apt-get update &&  \
-    apt-get install -y && \
-    python3.10 &&  \
-    python3-pip &&  \
-    git &&  \
+    apt-get install -y python3.10 python3-pip git &&  \
     rm -rf /var/lib/apt/lists/*
 
 #Set python3 as the default python command
