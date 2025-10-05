@@ -18,7 +18,7 @@ from src.models import get_model
 from src.utils.logger import setup_logger, init_wandb
 
 
-def train_one_epoch(model, dataloader, optimizer, criterion, device):
+def train_one_epoch(model, dataloader, optimizer, scheduler, criterion, device, epoch):
     """
     Runs a single training epoch.
     """
@@ -27,8 +27,8 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
     correct_predictions = 0
     total_samples = 0
 
-    progress_bar = tqdm(dataloader, desc="Training", unit="batch")
-    for images, labels in progress_bar:
+    progress_bar = tqdm(dataloader, desc=f"Training epoch {epoch}", unit="batch")
+    for i, (images, labels) in enumerate(progress_bar):
         images, labels = images.to(device), labels.to(device).float().unsqueeze(1)
 
         # Forward pass
@@ -39,6 +39,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
         # Backward pass and optimization
         loss.backward()
         optimizer.step()
+        scheduler.step(epoch - 1 + i / len(dataloader))
 
         # Statistics
         total_loss += loss.item()
@@ -46,7 +47,10 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
         correct_predictions += (preds == labels).sum().item()
         total_samples += labels.size(0)
 
-        progress_bar.set_postfix(loss=total_loss / total_samples, acc=correct_predictions / total_samples)
+        # Display current LR in the progress bar
+        current_lr = scheduler.get_last_lr()[0]
+        progress_bar.set_postfix(loss=f"{total_loss / (i+1)}", acc=f"{correct_predictions / total_samples:.4f}", lr=f"{current_lr}")
+
 
     avg_loss = total_loss / len(dataloader)
     accuracy = correct_predictions / total_samples
@@ -62,7 +66,7 @@ def validate_one_epoch(model, dataloader, criterion, device):
     correct_predictions = 0
     total_samples = 0
 
-    progress_bar = tqdm(dataloader, desc="Validating", unit="batch")
+    progress_bar = tqdm(dataloader, desc="Validation", unit="batch")
     with torch.no_grad():
         for images, labels in progress_bar:
             images, labels = images.to(device), labels.to(device).float().unsqueeze(1)
@@ -77,7 +81,7 @@ def validate_one_epoch(model, dataloader, criterion, device):
             correct_predictions += (preds == labels).sum().item()
             total_samples += labels.size(0)
 
-            progress_bar.set_postfix(loss=total_loss / total_samples, acc=correct_predictions / total_samples)
+            progress_bar.set_postfix(loss=f"{total_loss / (len(progress_bar))}", acc=f"{correct_predictions / total_samples}")
 
     avg_loss = total_loss / len(dataloader)
     accuracy = correct_predictions / total_samples
@@ -106,22 +110,25 @@ def main():
     test_loader = build_dataloader('test', config)
     logging.info("Dataloaders built successfully.")
 
-    # --- Model, Optimizer, Loss ---
+    # --- Model, Optimizer, Loss , Scheduler ---
     logging.info(f"Loading model: {config.MODEL_NAME}")
     model = get_model(config.MODEL_NAME, config.PRETRAINED, config.OUTPUT_FEATURES).to(config.DEVICE)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=config.T_0, T_mult=config.T_MULT, eta_min=config.ETA_MIN)
     criterion = nn.BCEWithLogitsLoss()
 
     logging.info("Starting training...")
     tr_start = time()
     for epoch in range(1, config.EPOCHS + 1):
         logging.info(f"--- Epoch {epoch}/{config.EPOCHS} ---")
+        current_lr = scheduler.get_last_lr()[0]
+        logging.info(f"Current Learning Rate: {current_lr}")
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, config.DEVICE)
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, config.DEVICE)
         logging.info(f"Epoch {epoch} Training -> Loss: {train_loss}, Accuracy: {train_acc}")
 
-        val_loss, val_acc = validate_one_epoch(model, test_loader, criterion, config.DEVICE)
+        val_loss, val_acc = validate_one_epoch(model, test_loader, criterion, config.DEVICE, epoch)
         logging.info(f"Epoch {epoch} Validation -> Loss: {val_loss}, Accuracy: {val_acc}")
 
         # --- Log to WandB ---
