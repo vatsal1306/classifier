@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+from time import time
 import sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,7 +15,7 @@ import config
 from src.config import RUN_NAME
 from src.data.dataloader import build_dataloader
 from src.models import get_model
-from src.utils.logger import setup_logger
+from src.utils.logger import setup_logger, init_wandb
 
 
 def train_one_epoch(model, dataloader, optimizer, criterion, device):
@@ -94,6 +95,7 @@ def main():
 
     # --- Setup Logger ---
     setup_logger(os.path.join(run_dir, "train.log"))
+    wb = init_wandb()
 
     logging.info(f"Starting new run: {RUN_NAME}")
     logging.info(f"Device: {config.DEVICE}")
@@ -108,25 +110,40 @@ def main():
     logging.info(f"Loading model: {config.MODEL_NAME}")
     model = get_model(config.MODEL_NAME, config.PRETRAINED, config.OUTPUT_FEATURES).to(config.DEVICE)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.LEARNING_RATE)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
     criterion = nn.BCEWithLogitsLoss()
 
     logging.info("Starting training...")
+    tr_start = time()
     for epoch in range(1, config.EPOCHS + 1):
         logging.info(f"--- Epoch {epoch}/{config.EPOCHS} ---")
 
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, config.DEVICE)
-        logging.info(f"Epoch {epoch} Training -> Loss: {train_loss:.4f}, Accuracy: {train_acc:.4f}")
+        logging.info(f"Epoch {epoch} Training -> Loss: {train_loss}, Accuracy: {train_acc}")
 
         val_loss, val_acc = validate_one_epoch(model, test_loader, criterion, config.DEVICE)
-        logging.info(f"Epoch {epoch} Validation -> Loss: {val_loss:.4f}, Accuracy: {val_acc:.4f}")
+        logging.info(f"Epoch {epoch} Validation -> Loss: {val_loss}, Accuracy: {val_acc}")
+
+        # --- Log to WandB ---
+        if wb is not None:
+            wb.log({
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "train_accuracy": train_acc,
+                "val_loss": val_loss,
+                "val_accuracy": val_acc,
+                "lr": optimizer.param_groups[0]['lr']
+            })
 
         # --- Save Checkpoint ---
         if epoch % config.SAVE_CHECKPOINT_EPOCHS == 0:
-            checkpoint_path = os.path.join(checkpoints_dir, f"model_epoch_{epoch}.pth")
+            checkpoint_path = os.path.join(checkpoints_dir, f"model_{epoch}.pth")
             torch.save(model.state_dict(), checkpoint_path)
             logging.info(f"Checkpoint saved to {checkpoint_path}")
 
+    # log training time in wandb
+    if wb is not None:
+        wb.summary["training_time"] = time() - tr_start
     logging.info("--- Training Complete ---")
 
 

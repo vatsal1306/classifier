@@ -15,9 +15,11 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EPOCHS = 2  # Total number of training epochs
 LEARNING_RATE = 0.01  # Initial learning rate for the optimizer
 OPTIMIZER = "AdamW"  # Optimizer to use (e.g., "AdamW", "SGD")
+WEIGHT_DECAY = 0.0001  # Weight decay factor for regularization
 LOSS_FUNCTION = "BCEWithLogitsLoss"  # Loss function for training
 
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"  # Main directory to store all training runs
+DESCRIPTION = "Test run with resnet50 on filtered dataset"  # Description for the current run
 RUN_NAME = "test_run"  # Name for the current run (used in the run directory)
 SAVE_CHECKPOINT_EPOCHS = 20  # Save a model checkpoint every N epochs
