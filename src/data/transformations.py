@@ -1,4 +1,5 @@
 import albumentations as A
+import cv2
 from albumentations.pytorch import ToTensorV2
 
 # ImageNet normalization statistics
@@ -15,10 +16,13 @@ def get_train_transforms():
     This pipeline works directly with OpenCV images (NumPy arrays).
     """
     return A.Compose([
-        A.RandomResizedCrop(size=(IMAGE_SIZE, IMAGE_SIZE), scale=(0.8, 1.0)),
+        A.RandomResizedCrop(size=(IMAGE_SIZE, IMAGE_SIZE), scale=(0.8, 1.0), ratio=(1, 1),
+                            interpolation=cv2.INTER_LANCZOS4),
         A.HorizontalFlip(p=0.5),
-        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.8),
-        A.Rotate(limit=15, p=0.5),
+        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.6),
+        A.Erasing(scale=[0.02, 0.1],ratio=[0.3, 2.0],fill=0, p=0.25),
+        A.Rotate(limit=15, interpolation=cv2.INTER_CUBIC, border_mode=cv2.BORDER_CONSTANT, p=0.5),
+        A.ShiftScaleRotate(shift_limit=[-0.1,0.1], scale_limit=0, rotate_limit=0, interpolation=cv2.INTER_CUBIC),
         A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ToTensorV2(),
     ])
@@ -29,7 +33,7 @@ def get_test_transforms():
     Returns the data transformation pipeline for the validation/test set using Albumentations.
     """
     return A.Compose([
-        A.Resize(height=IMAGE_SIZE, width=IMAGE_SIZE),
+        A.Resize(height=IMAGE_SIZE, width=IMAGE_SIZE, interpolation=cv2.INTER_LANCZOS4),
         A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
         ToTensorV2(),
     ])
