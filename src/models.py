@@ -21,6 +21,8 @@ def get_model(model_name="resnet18", pretrained=True, num_classes=1):
         model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT if pretrained else None)
     elif model_name == "resnet34":
         model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT if pretrained else None)
+    elif model_name == "resnet101":
+        model = models.resnet101(weights=models.ResNet101_Weights.DEFAULT if pretrained else None)
     # Add other models here as needed
     else:
         raise ValueError(f"Model '{model_name}' is not supported.")
