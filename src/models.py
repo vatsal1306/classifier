@@ -2,36 +2,78 @@ import torch.nn as nn
 from torchvision import models
 
 
-def get_model(model_name="resnet18", pretrained=True, num_classes=1):
+# --- Helper functions for building specific model families ---
+
+def _build_resnet(model_name, weights, num_classes):
+    """Helper function to build and modify a ResNet model."""
+    if model_name == "resnet18":
+        model = models.resnet18(weights=weights)
+    elif model_name == "resnet34":
+        model = models.resnet34(weights=weights)
+    else:
+        # This case should not be reached if the registry is set up correctly
+        raise ValueError(f"Unsupported ResNet variant: {model_name}")
+
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, num_classes)
+    return model
+
+
+def _build_vit(model_name, weights, num_classes):
+    """Helper function to build and modify a Vision Transformer model."""
+    if model_name == "vit_b_16":
+        model = models.vit_b_16(weights=weights)
+    elif model_name == "vit_l_32":
+        model = models.vit_l_32(weights=weights)
+    else:
+        raise ValueError(f"Unsupported ViT variant: {model_name}")
+
+    num_ftrs = model.heads.head.in_features
+    model.heads.head = nn.Linear(num_ftrs, num_classes)
+    return model
+
+
+# --- Model and Weight Registries ---
+
+# A mapping from model names to their pre-trained weight enums
+WEIGHTS_MAPPING = {
+    "resnet18": models.ResNet18_Weights.DEFAULT,
+    "resnet34": models.ResNet34_Weights.DEFAULT,
+    "vit_b_16": models.ViT_B_16_Weights.DEFAULT,
+    "vit_l_32": models.ViT_L_32_Weights.DEFAULT,
+}
+
+# The main registry mapping model names to their builder functions
+MODEL_REGISTRY = {
+    "resnet18": _build_resnet,
+    "resnet34": _build_resnet,
+    "vit_b_16": _build_vit,
+}
+
+
+def get_model(model_name, pretrained=True, num_classes=1):
     """
-    Loads a pre-trained model and replaces the final classification layer.
+    Loads a model from the registry, replaces the classification head,
+    and loads pre-trained weights if specified.
 
     Args:
-        model_name (str): The name of the model architecture to load (e.g., "resnet18").
+        model_name (str): The name of the model architecture to load.
         pretrained (bool): Whether to load pre-trained ImageNet weights.
         num_classes (int): The number of output features for the final layer.
 
     Returns:
         torch.nn.Module: The modified model.
     """
-    # Load the pre-trained model
-    if model_name == "resnet18":
-        model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT if pretrained else None)
-    if model_name == "resnet50":
-        model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT if pretrained else None)
-    elif model_name == "resnet34":
-        model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT if pretrained else None)
-    elif model_name == "resnet101":
-        model = models.resnet101(weights=models.ResNet101_Weights.DEFAULT if pretrained else None)
-    # Add other models here as needed
-    else:
-        raise ValueError(f"Model '{model_name}' is not supported.")
+    if model_name not in MODEL_REGISTRY:
+        raise ValueError(f"Model '{model_name}' is not supported. Available models: {list(MODEL_REGISTRY.keys())}")
 
-    # Get the number of input features to the final fully connected layer
-    num_ftrs = model.fc.in_features
+    # 1. Get the correct builder function from the registry
+    model_builder = MODEL_REGISTRY[model_name]
 
-    # Replace the final layer with a new one for our specific task
-    # The output is a single logit for binary classification.
-    model.fc = nn.Linear(num_ftrs, num_classes)
+    # 2. Determine which weights to use (if any)
+    weights = WEIGHTS_MAPPING[model_name] if pretrained else None
+
+    # 3. Build the model
+    model = model_builder(model_name=model_name, weights=weights, num_classes=num_classes)
 
     return model

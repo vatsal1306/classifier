@@ -63,7 +63,7 @@ def init_wandb(sync_mode: Literal["online", "offline", "disabled"] = 'online'):
             "batch_size": config.TRAIN_BATCH_SIZE,
             "weight_decay": config.WEIGHT_DECAY,
             "optimizer": config.OPTIMIZER,
-            # "scheduler": scheduler,
+            "scheduler": config.SCHEDULER,
             "model": config.MODEL_NAME,
         })
 
