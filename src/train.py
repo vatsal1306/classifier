@@ -125,10 +125,10 @@ def main():
         current_lr = scheduler.get_last_lr()[0]
         logging.info(f"Current Learning Rate: {current_lr}")
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, config.DEVICE)
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, config.DEVICE, epoch)
         logging.info(f"Epoch {epoch} Training -> Loss: {train_loss}, Accuracy: {train_acc}")
 
-        val_loss, val_acc = validate_one_epoch(model, test_loader, criterion, config.DEVICE, epoch)
+        val_loss, val_acc = validate_one_epoch(model, test_loader, criterion, config.DEVICE)
         logging.info(f"Epoch {epoch} Validation -> Loss: {val_loss}, Accuracy: {val_acc}")
 
         # --- Log to WandB ---
