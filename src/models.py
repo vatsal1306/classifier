@@ -48,6 +48,7 @@ MODEL_REGISTRY = {
     "resnet18": _build_resnet,
     "resnet34": _build_resnet,
     "vit_b_16": _build_vit,
+    "vit_l_32": _build_vit,
 }
 
 
