@@ -1,5 +1,6 @@
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tqdm import tqdm
 
@@ -124,6 +125,73 @@ def download_dataset():
     download_directories(ACCESS_KEY, SECRET_KEY, R2_ENDPOINT, BUCKET_NAME, BASE_DIR, DIRS)
 
 
+def copy_one_file(src_path: str, dest_dir: str):
+    """
+    Copy a single file from src_path into dest_dir.
+    Overwrites if already exists.
+    """
+    # os.makedirs(dest_dir, exist_ok=True)
+    fname = os.path.basename(src_path)
+    dst = os.path.join(dest_dir, fname)
+    try:
+        shutil.copy2(src_path, dst)
+    except Exception as e:
+        # You can log the error or handle partial failures
+        print(f"Failed to copy {src_path} to {dst}: {e}")
+
+
+def gather_files_under(dir_path: str):
+    """
+    Walk dir_path and return a list of full file paths under it (all subdirectories).
+    """
+    file_list = []
+    for root, dirs, files in os.walk(dir_path):
+        for f in files:
+            file_list.append(os.path.join(root, f))
+    return file_list
+
+
+def copy_from_sources(src_dirs, target_dir, max_workers, desc):
+    """
+    For each directory in src_dirs, copy all files (recursively) into target_dir (flat).
+    (If you want to preserve subdirectory structure, you can adjust logic.)
+    """
+    # First, gather all source file paths
+    all_files = []
+    for sd in src_dirs:
+        all_files.extend(gather_files_under(sd))
+
+    total = len(all_files)
+    print(f"Copying {total} files into {target_dir} using {max_workers} workers")
+
+    # Use ThreadPoolExecutor for I/O-bound work
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all copy tasks
+        futures = [executor.submit(copy_one_file, src, target_dir) for src in all_files]
+        # Use tqdm to monitor progress
+        for _ in tqdm(as_completed(futures), total=total, desc=desc or f"Copy to {target_dir}"):
+            pass  # each iteration means one future finished
+
+
+def parallel_copy(list_a, list_b, dir_x, dir_y, max_workers):
+    """
+    Given:
+      - list_human: list of source directories whose files go into dir_x
+      - list_b: list of source directories whose files go into dir_y
+      - dir_x, dir_y: target directories
+
+    Performs both copy operations (A → X, B → Y) in parallel (across threads).
+    """
+    # You can run the two groups concurrently as well (if desired)
+    # But simpler: do group A then group B, both with parallelism
+
+    # print("Copying from list_human into", dir_x)
+    copy_from_sources(list_a, dir_x, max_workers=max_workers, desc="From list_a")
+
+    # print("Copying from list_b into", dir_y)
+    copy_from_sources(list_b, dir_y, max_workers=max_workers, desc="From list_b")
+
+
 if __name__ == '__main__':
     # Parameters
     ACCESS_KEY = "04f041b37bfeb0c8cec3aaf1240c23af"
@@ -137,4 +205,70 @@ if __name__ == '__main__':
         range(3))  # download 0–9 folders, which means 0 is web4m,  0 to 2 is Web12m and 0 to 9 is web42m(web260m)
 
     # copy_files()
-    download_dataset()
+    # download_dataset()
+
+    list_human = [
+        "/vidgen2/vatsal/classifier/dataset/new/data/bm/human",
+        '/vidgen2/vatsal/classifier/dataset/new/data/bm/unique_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model/val/human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model/train/human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model_training/train/human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model_training/val/human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_scraped_bm_set/human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/onnx_bm/human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/onnx_output/human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/preprocessed_dataset/val/real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/processed_dataset_sourav/train/real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/processed_dataset_sourav/benchmark/real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/processed_dataset_sourav/val/real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/s3_sorted/human',
+    ]
+
+    list_non_human = [
+        '/vidgen2/vatsal/classifier/dataset/new/data/bm/nonhuman',
+        '/vidgen2/vatsal/classifier/dataset/new/data/bm/unique_nonhuman',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model/val/non_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model/train/non_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model_training/train/non_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_dataset_for_model_training/val/non_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/new_scraped_bm_set/non_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/onnx_bm/non_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/onnx_output/non_human',
+        '/vidgen2/vatsal/classifier/dataset/new/data/preprocessed_dataset/train/not_real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/preprocessed_dataset/val/not_real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/processed_dataset_sourav/train/not_real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/processed_dataset_sourav/benchmark/not_real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/processed_dataset_sourav/val/not_real_face',
+        '/vidgen2/vatsal/classifier/dataset/new/data/s3_sorted/nonhuman',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/anime_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/cartoon_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/comic_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/full_face_masks',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/game_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/paintings',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/photo_of_nonhuman',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_madhu_data/statues',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/anime_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/cartoon_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/comic_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/full_face_masks',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/game_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/paintings',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/photo_of_nonhuman',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_new_scraped/statues',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/anime_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/cartoon_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/comic_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/full_face_masks',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/game_characters',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/paintings',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/photo_of_nonhuman',
+        '/vidgen2/vatsal/classifier/dataset/new/data/sorted_scraped/statues',
+        '/vidgen2/vatsal/classifier/dataset/new/data/unique_nonhuman',
+    ]
+
+    dest_human = "/vidgen2/vatsal/classifier/dataset/processed/train/human"
+    dest_non_human = "/vidgen2/vatsal/classifier/dataset/processed/train/non_human"
+
+    # You could set max_workers = os.cpu_count() * 2 or some fixed number
+    parallel_copy(list_human, list_non_human, dest_human, dest_non_human, max_workers=os.cpu_count() * 2)
