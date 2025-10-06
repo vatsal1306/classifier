@@ -19,19 +19,19 @@ class ImageClassDataset(Dataset):
     A PyTorch Dataset for loading images using OpenCV from a single class folder.
     """
 
-    def __init__(self, root_dir, label, transform=None, return_numpy=False):
+    def __init__(self, root_dir, label, transform=None, return_path=False):
         """
         Args:
             root_dir (str): Directory with all the images for one class.
             label (int): The label to assign to all images in this dataset.
             transform (callable, optional): Albumentations transform to be applied.
-            return_numpy (bool): If True, __getitem__ returns the original numpy image.
+            return_path (bool): If True, __getitem__ returns the image path.
         """
         self.image_paths = glob.glob(os.path.join(root_dir, '**', '*.[jJ][pP]*[gG]'), recursive=True) + \
                            glob.glob(os.path.join(root_dir, '**', '*.[pP][nN][gG]'), recursive=True)
         self.label = label
         self.transform = transform
-        self.return_numpy = return_numpy
+        self.return_path = return_path
 
     def __len__(self):
         return len(self.image_paths)
@@ -56,8 +56,8 @@ class ImageClassDataset(Dataset):
             # Fallback: convert numpy array to tensor and normalize
             image_tensor = torch.from_numpy(image_rgb.transpose((2, 0, 1))).float().div(255)
 
-        if self.return_numpy:
-            return image_tensor, self.label, image_rgb
+        if self.return_path:
+            return image_tensor, self.label, img_path
         else:
             return image_tensor, self.label
 
