@@ -12,44 +12,46 @@ logger = logging.getLogger(__name__)
 
 def save_annotated_mistake(image_path, output_dir, true_label, pred_label, confidence):
     """
-    Reads an image, adds prediction info as a text overlay, and saves it
-    to a new file with a descriptive name.
+    Reads an image, creates a new canvas, pastes the image on the left,
+    adds prediction info on the right, and saves the result.
     """
     image_bgr = cv2.imread(image_path)
     if image_bgr is None:
         logger.warning(f"Could not read image {image_path}, skipping.")
         return
 
+    h, w, _ = image_bgr.shape
+
+    # --- Create a new, larger canvas ---
+    # We'll add a 200-pixel wide panel on the right for text to ensure it fits
+    text_panel_width = 200
+    canvas_h = h
+    canvas_w = w + text_panel_width
+    canvas = cv2.copyMakeBorder(image_bgr, 0, 0, 0, text_panel_width, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+
     # --- Prepare text and filename components ---
     true_lbl_str = "Human" if true_label == 1 else "NonHuman"
     pred_lbl_str = "Human" if pred_label == 1 else "NonHuman"
+    original_basename = os.path.basename(image_path)
 
-    # --- Add text overlay on the image ---
+    # --- Add text overlay on the new white panel ---
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
-    font_color = (0, 0, 255)  # Red for mistakes (BGR format)
+    font_scale = 0.65
+    font_color = (0, 0, 0)  # Black text for the white background
     thickness = 2
 
-    text1 = f"True: {true_lbl_str}"
+    text1 = f"GT: {true_lbl_str}"
     text2 = f"Pred: {pred_lbl_str}"
-    text3 = f"Conf: {confidence:.2f}"
+    text3 = f"Conf: {confidence:.4f}"
 
-    # Add a semi-transparent background for better readability
-    (tw1, th1), _ = cv2.getTextSize(text1, font, font_scale, thickness)
-    cv2.rectangle(image_bgr, (5, 5), (10 + tw1, 25 + th1 * 3), (0, 0, 0), -1)
+    # Text placement coordinates (on the right panel)
+    text_x = w + 10
+    cv2.putText(canvas, text1, (text_x, 30), font, font_scale, font_color, thickness)
+    cv2.putText(canvas, text2, (text_x, 60), font, font_scale, font_color, thickness)
+    cv2.putText(canvas, text3, (text_x, 90), font, font_scale, font_color, thickness)
 
-    # Place the text
-    cv2.putText(image_bgr, text1, (10, 20), font, font_scale, font_color, thickness)
-    cv2.putText(image_bgr, text2, (10, 40), font, font_scale, font_color, thickness)
-    cv2.putText(image_bgr, text3, (10, 60), font, font_scale, font_color, thickness)
-
-    # --- Construct the new filename ---
-    original_basename = os.path.basename(image_path)
-    # Format the new filename with all metadata
-    new_filename = f"true_{true_lbl_str}_pred_{pred_lbl_str}_conf_{confidence:.2f}_{original_basename}"
-    output_path = os.path.join(output_dir, new_filename)
-
-    cv2.imwrite(output_path, image_bgr)
+    output_path = os.path.join(output_dir, original_basename)
+    cv2.imwrite(output_path, canvas)
 
 
 def main(pkl_path, output_dir, top_n, mistake_type):
