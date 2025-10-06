@@ -1,70 +1,61 @@
 import argparse
 import logging
-import math
 import os
 import pickle
 
 import cv2
-import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
 
-def create_collage(image_paths, texts, output_path, grid_size=5):
+def save_annotated_mistake(image_path, output_dir, true_label, pred_label, confidence):
     """
-    Reads a list of image paths and creates a grid collage.
+    Reads an image, adds prediction info as a text overlay, and saves it
+    to a new file with a descriptive name.
     """
-    if not image_paths:
-        logger.info("No images to visualize.")
+    image_bgr = cv2.imread(image_path)
+    if image_bgr is None:
+        logger.warning(f"Could not read image {image_path}, skipping.")
         return
 
-    num_images = len(image_paths)
+    # --- Prepare text and filename components ---
+    true_lbl_str = "Human" if true_label == 1 else "NonHuman"
+    pred_lbl_str = "Human" if pred_label == 1 else "NonHuman"
 
-    # Determine a standard size for grid cells by checking the first image
-    sample_img = cv2.imread(image_paths[0])
-    if sample_img is None:
-        logger.error(f"Could not read sample image {image_paths[0]}")
-        return
-    h, w, _ = sample_img.shape
-
-    # Create a grid to hold the images
-    grid_h = math.ceil(num_images / grid_size)
-    grid_image = np.full((grid_h * h, grid_size * w, 3), 255, dtype=np.uint8)
-
+    # --- Add text overlay on the image ---
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.4
-    line_type = 1
+    font_scale = 0.6
+    font_color = (0, 0, 255)  # Red for mistakes (BGR format)
+    thickness = 2
 
-    logger.info(f"Creating collage with {num_images} images...")
-    for i, img_path in enumerate(tqdm(image_paths, desc="Building Collage")):
-        image_bgr = cv2.imread(img_path)
-        if image_bgr is None:
-            logger.warning(f"Could not read image {img_path}, skipping.")
-            continue
+    text1 = f"True: {true_lbl_str}"
+    text2 = f"Pred: {pred_lbl_str}"
+    text3 = f"Conf: {confidence:.2f}"
 
-        resized_img = cv2.resize(image_bgr, (w, h))
+    # Add a semi-transparent background for better readability
+    (tw1, th1), _ = cv2.getTextSize(text1, font, font_scale, thickness)
+    cv2.rectangle(image_bgr, (5, 5), (10 + tw1, 25 + th1 * 3), (0, 0, 0), -1)
 
-        row = i // grid_size
-        col = i % grid_size
+    # Place the text
+    cv2.putText(image_bgr, text1, (10, 20), font, font_scale, font_color, thickness)
+    cv2.putText(image_bgr, text2, (10, 40), font, font_scale, font_color, thickness)
+    cv2.putText(image_bgr, text3, (10, 60), font, font_scale, font_color, thickness)
 
-        y_offset, x_offset = row * h, col * w
-        grid_image[y_offset:y_offset + h, x_offset:x_offset + w] = resized_img
+    # --- Construct the new filename ---
+    original_basename = os.path.basename(image_path)
+    # Format the new filename with all metadata
+    new_filename = f"true_{true_lbl_str}_pred_{pred_lbl_str}_conf_{confidence:.2f}_{original_basename}"
+    output_path = os.path.join(output_dir, new_filename)
 
-        # Add text labels
-        y_text_offset = y_offset + 12
-        for line in texts[i]:
-            # Determine color (green for correct, red for incorrect)
-            font_color = (0, 0, 255) if "True!=Pred" in line else (0, 128, 0)
-            cv2.putText(grid_image, line, (x_offset + 5, y_text_offset), font, font_scale, font_color, line_type)
-            y_text_offset += 12
-
-    cv2.imwrite(output_path, grid_image)
-    logger.info(f"Collage saved to {output_path}")
+    cv2.imwrite(output_path, image_bgr)
 
 
-def main(pkl_path, output_dir, num_images, grid_size, mistake_type):
+def main(pkl_path, output_dir, top_n, mistake_type):
+    """
+    Loads predictions, finds the top N mistakes, and saves them as individual annotated images.
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     logger.info(f"Loading predictions from {pkl_path}")
@@ -73,11 +64,15 @@ def main(pkl_path, output_dir, num_images, grid_size, mistake_type):
     df = pd.DataFrame(results_list)
 
     # Calculate confidence for all predictions
-    df['confidence'] = np.where(df['predicted_label'] == 1, df['probability_human'], 1 - df['probability_human'])
+    df['confidence'] = df.apply(
+        lambda row: row['probability_human'] if row['predicted_label'] == 1 else 1 - row['probability_human'],
+        axis=1
+    )
 
     # Filter for mistakes
     mistakes_df = df[df['true_label'] != df['predicted_label']].copy()
 
+    # Apply optional filtering for specific mistake types
     if mistake_type == 'human_as_nonhuman':
         logger.info("Filtering for 'Human' misclassified as 'Non-Human'")
         mistakes_df = mistakes_df[mistakes_df['true_label'] == 1]
@@ -85,54 +80,43 @@ def main(pkl_path, output_dir, num_images, grid_size, mistake_type):
         logger.info("Filtering for 'Non-Human' misclassified as 'Human'")
         mistakes_df = mistakes_df[mistakes_df['true_label'] == 0]
     else:
-        logger.info("Visualizing all mistake types")
+        logger.info("Analyzing all mistake types")
 
-    # Sort by the most confident mistakes
-    mistakes_df = mistakes_df.sort_values(by='confidence', ascending=False).head(num_images)
+    # Sort by the most confident mistakes and select the top N
+    mistakes_df = mistakes_df.sort_values(by='confidence', ascending=False).head(top_n)
 
     if mistakes_df.empty:
         logger.info("No mistakes found for the specified criteria.")
         return
 
-    image_paths_to_plot = mistakes_df['image_path'].tolist()
-    texts_to_plot = []
-    for _, row in mistakes_df.iterrows():
-        true_lbl = "H" if row['true_label'] == 1 else "NH"
-        pred_lbl = "H" if row['predicted_label'] == 1 else "NH"
-        texts_to_plot.append([
-            f"True!=Pred: {true_lbl}!={pred_lbl}",
-            f"Conf: {row['confidence']:.2f}"
-        ])
+    logger.info(f"Saving the top {len(mistakes_df)} worst predictions individually to '{output_dir}'...")
 
-    # Save collage in chunks
-    images_per_file = grid_size * grid_size
-    num_files = math.ceil(len(image_paths_to_plot) / images_per_file)
+    # Loop through the top N mistakes and save each one
+    for _, row in tqdm(mistakes_df.iterrows(), total=len(mistakes_df), desc="Saving Mistake Images"):
+        save_annotated_mistake(
+            image_path=row['image_path'],
+            output_dir=output_dir,
+            true_label=row['true_label'],
+            pred_label=row['predicted_label'],
+            confidence=row['confidence']
+        )
 
-    for i in range(num_files):
-        start_idx = i * images_per_file
-        end_idx = start_idx + images_per_file
-
-        chunk_paths = image_paths_to_plot[start_idx:end_idx]
-        chunk_texts = texts_to_plot[start_idx:end_idx]
-
-        output_filename = os.path.join(output_dir, f"mistakes_{mistake_type}_part_{i + 1}.jpg")
-        create_collage(chunk_paths, chunk_texts, output_filename, grid_size)
+    logger.info(f"Successfully saved {len(mistakes_df)} images.")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Visualize model predictions from a pickle file.")
+    parser = argparse.ArgumentParser(
+        description="Analyze model predictions and save the worst mistakes as individual images.")
     parser.add_argument("--pkl_path", type=str, required=True,
                         help="Path to the predictions.pkl file generated by predict.py.")
-    parser.add_argument("--output_dir", type=str, default="visualizations",
-                        help="Directory to save the output collages.")
-    parser.add_argument("--num_images", type=int, default=100,
-                        help="Total number of images to visualize.")
-    parser.add_argument("--grid_size", type=int, default=10,
-                        help="Number of images per row/column in the collage grid.")
+    parser.add_argument("--output_dir", type=str, required=True,
+                        help="Directory to save the output images.")
+    parser.add_argument("--top_n", type=int, default=50,
+                        help="Total number of the worst prediction images to save.")
     parser.add_argument("--mistake_type", type=str, default="all",
                         choices=['all', 'human_as_nonhuman', 'nonhuman_as_human'],
-                        help="Filter which type of mistakes to visualize.")
+                        help="Filter which type of mistakes to save.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    main(args.pkl_path, args.output_dir, args.num_images, args.grid_size, args.mistake_type)
+    main(args.pkl_path, args.output_dir, args.top_n, args.mistake_type)
