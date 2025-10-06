@@ -106,8 +106,8 @@ def main():
 
     # --- Dataloaders ---
     logging.info("Building dataloaders...")
-    train_loader = build_dataloader('test', config)
-    test_loader = build_dataloader('test', config)
+    train_loader = build_dataloader('train', config)
+    test_loader = build_dataloader('train', config)
     logging.info("Dataloaders built successfully.")
 
     # --- Model, Optimizer, Loss , Scheduler ---
