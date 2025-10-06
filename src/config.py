@@ -1,7 +1,7 @@
 import torch
 
 # --- DATASET & DATALOADER ---
-DATA_DIR = "dataset/filtered_data"  # Directory where the processed shards are stored
+DATA_DIR = "dataset/processed"  # Directory where the processed shards are stored
 TRAIN_BATCH_SIZE = 128  # Batch size for training (32 human, 32 non-human)
 TEST_BATCH_SIZE = 128  # Batch size for validation/testing
 
@@ -24,6 +24,6 @@ LOSS_FUNCTION = "BCEWithLogitsLoss"  # Loss function for training
 
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"  # Main directory to store all training runs
-DESCRIPTION = "ViT overfitting experiment on train data"  # Description for the current run
-RUN_NAME = "vit_overfit_train"  # Name for the current run (used in the run directory)
+DESCRIPTION = "ViT on new data"  # Description for the current run
+RUN_NAME = "vit_new_data"  # Name for the current run (used in the run directory)
 SAVE_CHECKPOINT_EPOCHS = 5  # Save a model checkpoint every N epochs

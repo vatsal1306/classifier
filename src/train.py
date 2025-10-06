@@ -107,7 +107,7 @@ def main():
     # --- Dataloaders ---
     logging.info("Building dataloaders...")
     train_loader = build_dataloader('train', config)
-    test_loader = build_dataloader('train', config)
+    test_loader = build_dataloader('test', config)
     logging.info("Dataloaders built successfully.")
 
     # --- Model, Optimizer, Loss , Scheduler ---
@@ -140,7 +140,7 @@ def main():
                 "val_loss": val_loss,
                 "val_accuracy": val_acc,
                 "lr": optimizer.param_groups[0]['lr']
-            })
+            }, step=epoch)
 
         # --- Save Checkpoint ---
         if epoch % config.SAVE_CHECKPOINT_EPOCHS == 0:
