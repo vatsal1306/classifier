@@ -192,6 +192,25 @@ def parallel_copy(list_a, list_b, dir_x, dir_y, max_workers):
     copy_from_sources(list_b, dir_y, max_workers=max_workers, desc="From list_b")
 
 
+def determine_max_workers():
+    """Heuristic for number of threads for I/O-bound copy."""
+    import os
+    n_cpu = os.cpu_count() or 1
+    try:
+        cores_allowed = len(os.sched_getaffinity(0))
+    except AttributeError:
+        cores_allowed = n_cpu
+    multiplier = 5
+    w = cores_allowed * multiplier
+    max_cap = 100
+    if w > max_cap:
+        w = max_cap
+    min_workers = 4
+    if w < min_workers:
+        w = min_workers
+    return w
+
+
 if __name__ == '__main__':
     # Parameters
     ACCESS_KEY = "04f041b37bfeb0c8cec3aaf1240c23af"
@@ -271,4 +290,6 @@ if __name__ == '__main__':
     dest_non_human = "/vidgen2/vatsal/classifier/dataset/processed/train/non_human"
 
     # You could set max_workers = os.cpu_count() * 2 or some fixed number
-    parallel_copy(list_human, list_non_human, dest_human, dest_non_human, max_workers=os.cpu_count() * 2)
+    n_workers = determine_max_workers()
+    print(f"Using {n_workers} threads for copying")
+    parallel_copy(list_human, list_non_human, dest_human, dest_non_human, max_workers=n_workers)
