@@ -24,6 +24,6 @@ LOSS_FUNCTION = "BCEWithLogitsLoss"  # Loss function for training
 
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"  # Main directory to store all training runs
-DESCRIPTION = "ViT large"  # Description for the current run
-RUN_NAME = "vit_first"  # Name for the current run (used in the run directory)
+DESCRIPTION = "ViT overfitting experiment on test data"  # Description for the current run
+RUN_NAME = "vit_overfit_test"  # Name for the current run (used in the run directory)
 SAVE_CHECKPOINT_EPOCHS = 5  # Save a model checkpoint every N epochs

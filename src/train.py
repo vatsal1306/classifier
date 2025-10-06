@@ -106,7 +106,7 @@ def main():
 
     # --- Dataloaders ---
     logging.info("Building dataloaders...")
-    train_loader = build_dataloader('train', config)
+    train_loader = build_dataloader('test', config)
     test_loader = build_dataloader('test', config)
     logging.info("Dataloaders built successfully.")
 
