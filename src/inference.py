@@ -7,10 +7,10 @@ import torch
 from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 
-import config as default_config
 from src.data.dataloader import ImageClassDataset
 from src.data.transformations import get_test_transforms
 from src.models import get_model
+from src.utils.utils import import_vars_from_path
 
 
 def visualize_mistakes(mistakes, output_path, grid_size=5):
@@ -68,15 +68,17 @@ def visualize_mistakes(mistakes, output_path, grid_size=5):
     print(f"Mistakes collage saved to {output_path}")
 
 
-def run_inference(checkpoint_path, data_dir, output_dir):
+def run_inference(checkpoint_path, config):
     """
     Runs inference on the test set, calculates accuracy, and visualizes mistakes.
     """
+    data_dir = config.DATA_DIR
+    output_dir = os.path.join(config.RUNS_DIR, config.RUN_NAME, "inference_results")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Loading model from {checkpoint_path}")
-    model = get_model(default_config.MODEL_NAME, pretrained=False, num_classes=default_config.OUTPUT_FEATURES)
+    model = get_model(config.MODEL_NAME, pretrained=False, num_classes=config.OUTPUT_FEATURES)
     model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.to(device)
     model.eval()
@@ -90,7 +92,7 @@ def run_inference(checkpoint_path, data_dir, output_dir):
         os.path.join(data_dir, "test", "non_human"), label=0, transform=get_test_transforms(), return_numpy=True
     )
     test_dataset = ConcatDataset([human_dataset, non_human_dataset])
-    dataloader = DataLoader(test_dataset, batch_size=default_config.TEST_BATCH_SIZE, shuffle=False, num_workers=4)
+    dataloader = DataLoader(test_dataset, batch_size=config.TEST_BATCH_SIZE, shuffle=False, num_workers=4)
 
     correct_predictions = 0
     total_samples = 0
@@ -139,9 +141,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run inference and visualize model mistakes.")
     parser.add_argument("--checkpoint", type=str, required=True,
                         help="Path to the trained model checkpoint (.pth file).")
-    parser.add_argument("--data_dir", type=str, default=default_config.DATA_DIR,
-                        help="Path to the processed data directory.")
-    parser.add_argument("--output_dir", type=str, default="inference_results",
-                        help="Directory to save inference results.")
+    parser.add_argument("--config_pth", type="str", required=True, help="Path to the config.py file.")
     args = parser.parse_args()
-    run_inference(args.checkpoint, args.data_dir, args.output_dir)
+
+    config = import_vars_from_path(args.config_pth)
+    run_inference(args.checkpoint, config)
