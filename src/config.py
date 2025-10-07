@@ -2,8 +2,8 @@ import torch
 
 # --- DATASET & DATALOADER ---
 DATA_DIR = "dataset/processed"  # Directory where the processed shards are stored
-TRAIN_BATCH_SIZE = 128  # Batch size for training (32 human, 32 non-human)
-TEST_BATCH_SIZE = 128  # Batch size for validation/testing
+TRAIN_BATCH_SIZE = 64  # Batch size for training (32 human, 32 non-human)
+TEST_BATCH_SIZE = 64  # Batch size for validation/testing
 
 # --- MODEL ---
 MODEL_NAME = "vit_l_32"  # Model architecture to use (e.g., "resnet18", "resnet34")
@@ -18,12 +18,12 @@ OPTIMIZER = "AdamW"  # Optimizer to use (e.g., "AdamW", "SGD")
 SCHEDULER = "CosineAnnealingWarmRestarts"
 T_0 = 10         # Number of epochs for the first restart.
 T_MULT = 2       # A factor to increase T_i after a restart. T_i = T_i * T_mult
-ETA_MIN = 1e-12   # Minimum learning rate.
-WEIGHT_DECAY = 0.01  # Weight decay factor for regularization
+ETA_MIN = 1e-10   # Minimum learning rate.
+WEIGHT_DECAY = 0.001  # Weight decay factor for regularization
 LOSS_FUNCTION = "BCEWithLogitsLoss"  # Loss function for training
 
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"  # Main directory to store all training runs
-DESCRIPTION = "ViT on new data"  # Description for the current run
-RUN_NAME = "vit_new_data"  # Name for the current run (used in the run directory)
+DESCRIPTION = "ViT on manual filtered data"  # Description for the current run
+RUN_NAME = "vit_cleaned_data"  # Name for the current run (used in the run directory)
 SAVE_CHECKPOINT_EPOCHS = 5  # Save a model checkpoint every N epochs
