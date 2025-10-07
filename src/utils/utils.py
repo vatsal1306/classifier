@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 
 
 def import_vars_from_path(file_path):
@@ -40,3 +41,34 @@ def import_vars_from_path(file_path):
     except Exception as e:
         print(f"Error executing module {module_name}: {e}")
         return None
+
+
+def cleanup_models(dir_path: str) -> None:
+    """
+    Removes older or redundant model checkpoint files within a directory.
+    It looks for numbered 'model_*.pth' files and removes all but the one with the highest number.
+
+    Args:
+        dir_path (str): The path to the directory containing checkpoint files.
+    """
+    model_pattern = re.compile(r'^model_(\d+)\.pth$')  # only exact pattern
+    candidates = []
+    for fname in os.listdir(dir_path):
+        full = os.path.join(dir_path, fname)
+        if os.path.isfile(full):
+            m = model_pattern.match(fname)
+            if m:
+                num = int(m.group(1))
+                candidates.append((num, full))
+
+    if not candidates:
+        return  # nothing to cleanup
+
+    # find the highest-numbered file
+    best_num, best_path = max(candidates, key=lambda x: x[0])
+
+    # delete all model_*.pth except the best one
+    for num, full in candidates:
+        if full != best_path:
+            os.remove(full)
+    return

@@ -16,6 +16,7 @@ from src.config import RUN_NAME
 from src.data.dataloader import build_dataloader
 from src.models import get_model
 from src.utils.logger import setup_logger, init_wandb
+from src.utils.utils import cleanup_models
 
 
 def train_one_epoch(model, dataloader, optimizer, scheduler, criterion, device, epoch):
@@ -152,6 +153,9 @@ def main():
     if wb is not None:
         wb.summary["training_time"] = time() - tr_start
     logging.info("--- Training Complete ---")
+    # --- Cleanup old models ---
+    cleanup_models(dir_path=checkpoints_dir)
+    logging.info("Redundant checkpoints cleaned up.")
 
 
 if __name__ == "__main__":
