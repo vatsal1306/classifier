@@ -88,7 +88,7 @@ def run_predictions(checkpoint_path, config):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run model predictions and save results to a CSV.")
+    parser = argparse.ArgumentParser(description="Run model predictions and save results to predictions.pkl.")
     parser.add_argument("--checkpoint", type=str, required=True,
                         help="Path to the trained model checkpoint (.pth file).")
     parser.add_argument("--config", type=str, required=True, help="Path to the config.py file.")
