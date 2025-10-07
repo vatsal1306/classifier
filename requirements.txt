@@ -9,3 +9,5 @@ albumentations==2.0.8
 matplotlib==3.10.6
 wandb==0.22.1
 python-dotenv==1.1.1
+seaborn==0.13.2
+scikit-learn==1.7.2
