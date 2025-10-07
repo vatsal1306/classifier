@@ -6,7 +6,7 @@ TRAIN_BATCH_SIZE = 64  # Batch size for training (32 human, 32 non-human)
 TEST_BATCH_SIZE = 64  # Batch size for validation/testing
 
 # --- MODEL ---
-MODEL_NAME = "vit_l_32"  # Model architecture to use (e.g., "resnet18", "resnet34")
+MODEL_NAME = "efficientnet_v2_l"  # Model architecture to use (e.g., "resnet18", "resnet34")
 PRETRAINED = True  # Whether to use a model pre-trained on ImageNet
 OUTPUT_FEATURES = 1  # Number of output features (1 for binary classification with BCEWithLogitsLoss)
 
@@ -24,6 +24,6 @@ LOSS_FUNCTION = "BCEWithLogitsLoss"  # Loss function for training
 
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"  # Main directory to store all training runs
-DESCRIPTION = "ViT on manual filtered data"  # Description for the current run
-RUN_NAME = "vit_cleaned_data"  # Name for the current run (used in the run directory)
+DESCRIPTION = "EfficientNet V2 Large on manual filtered data"  # Description for the current run
+RUN_NAME = "effnet_v2_l_filtered_data"  # Name for the current run (used in the run directory)
 SAVE_CHECKPOINT_EPOCHS = 5  # Save a model checkpoint every N epochs
