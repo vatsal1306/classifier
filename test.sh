@@ -1,26 +1,36 @@
 RUN_NAME=vit_new_data
+#
+## test script to save predictions as pickle file
+#python src/predict.py \
+#--checkpoint runs/${RUN_NAME}/checkpoints/model_100.pth \
+#--config runs/${RUN_NAME}/config.py
+#
+## save classification report and heatmap of confusion matrix
+#python src/evaluate.py \
+#--pkl_path runs/${RUN_NAME}/predictions.pkl \
+#--save_dir runs/${RUN_NAME}/infer/
+#
+### visualize top N worst predictions as individual files
+## model predicted human as non humans
+#python src/viz_predictions.py \
+#--pkl_path runs/${RUN_NAME}/predictions.pkl \
+#--output_dir runs/${RUN_NAME}/infer/human_as_nonhuman/ \
+#--top_n 100 \
+#--mistake_type human_as_nonhuman
+#
+## model predicted non human as human
+#python src/viz_predictions.py \
+#--pkl_path runs/${RUN_NAME}/predictions.pkl \
+#--output_dir runs/${RUN_NAME}/infer/nonhuman_as_human/ \
+#--top_n 100 \
+#--mistake_type nonhuman_as_human
 
-# test script to save predictions as pickle file
-python src/predict.py \
---checkpoint runs/${RUN_NAME}/checkpoints/model_100.pth \
---config runs/${RUN_NAME}/config.py
 
-# save classification report and heatmap of confusion matrix
-python src/evaluate.py \
---pkl_path runs/${RUN_NAME}/predictions.pkl \
---save_dir runs/${RUN_NAME}/infer/
+### Sync local run checkpoints and files to google drive
+rm -r runs/${RUN_NAME}/__pycache__
+rm -r runs/${RUN_NAME}/wandb
 
-## visualize top N worst predictions as individual files
-# model predicted human as non humans
-python src/viz_predictions.py \
---pkl_path runs/${RUN_NAME}/predictions.pkl \
---output_dir runs/${RUN_NAME}/infer/human_as_nonhuman/ \
---top_n 100 \
---mistake_type human_as_nonhuman
-
-# model predicted non human as human
-python src/viz_predictions.py \
---pkl_path runs/${RUN_NAME}/predictions.pkl \
---output_dir runs/${RUN_NAME}/infer/nonhuman_as_human/ \
---top_n 100 \
---mistake_type nonhuman_as_human
+python /vidgen2/vatsal/gdrive/upload.py \
+--token /vidgen2/vatsal/gdrive/token.json \
+--dir runs/${RUN_NAME} \
+--parent 1JTyIP_maAXurSFMcDDruJRVgLdS_Z7Pe
