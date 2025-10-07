@@ -2,8 +2,8 @@ import torch
 
 # --- DATASET & DATALOADER ---
 DATA_DIR = "dataset/processed"  # Directory where the processed shards are stored
-TRAIN_BATCH_SIZE = 64  # Batch size for training (32 human, 32 non-human)
-TEST_BATCH_SIZE = 64  # Batch size for validation/testing
+TRAIN_BATCH_SIZE = 32  # Batch size for training (32 human, 32 non-human)
+TEST_BATCH_SIZE = 32  # Batch size for validation/testing
 
 # --- MODEL ---
 MODEL_NAME = "efficientnet_v2_l"  # Model architecture to use (e.g., "resnet18", "resnet34")
