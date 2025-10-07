@@ -1,8 +1,8 @@
 import logging
 import os
 import shutil
-from time import time
 import sys
+from time import time
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, root)
@@ -50,8 +50,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, criterion, device, 
 
         # Display current LR in the progress bar
         current_lr = scheduler.get_last_lr()[0]
-        progress_bar.set_postfix(loss=f"{total_loss / (i+1)}", acc=f"{correct_predictions / total_samples:.4f}", lr=f"{current_lr}")
-
+        progress_bar.set_postfix(loss=f"{total_loss / (i + 1)}", acc=f"{correct_predictions / total_samples:.4f}",
+                                 lr=f"{current_lr}")
 
     avg_loss = total_loss / len(dataloader)
     accuracy = correct_predictions / total_samples
@@ -82,7 +82,8 @@ def validate_one_epoch(model, dataloader, criterion, device):
             correct_predictions += (preds == labels).sum().item()
             total_samples += labels.size(0)
 
-            progress_bar.set_postfix(loss=f"{total_loss / (len(progress_bar))}", acc=f"{correct_predictions / total_samples}")
+            progress_bar.set_postfix(loss=f"{total_loss / (len(progress_bar))}",
+                                     acc=f"{correct_predictions / total_samples}")
 
     avg_loss = total_loss / len(dataloader)
     accuracy = correct_predictions / total_samples
@@ -115,8 +116,24 @@ def main():
     logging.info(f"Loading model: {config.MODEL_NAME}")
     model = get_model(config.MODEL_NAME, config.PRETRAINED, config.OUTPUT_FEATURES).to(config.DEVICE)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=config.T_0, T_mult=config.T_MULT, eta_min=config.ETA_MIN)
+    if config.OPTIMIZER == 'AdamW':
+        optimizer = torch.optim.AdamW(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
+    elif config.OPTIMIZER == 'SGD':
+        optimizer = torch.optim.SGD(model.parameters(), lr=config.LEARNING_RATE, momentum=0.9,
+                                    weight_decay=config.WEIGHT_DECAY)
+    else:
+        logging.error(f"Unsupported optimizer: {config.OPTIMIZER}")
+        return
+
+    if config.SCHEDULER == 'CosineAnnealingWarmRestarts':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=config.T_0,
+                                                                         T_mult=config.T_MULT, eta_min=config.ETA_MIN)
+    elif config.SCHEDULER == 'CosineAnnealingLR':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.EPOCHS, eta_min=config.ETA_MIN)
+    else:
+        logging.error(f"Unsupported scheduler: {config.SCHEDULER}")
+        return
+
     criterion = nn.BCEWithLogitsLoss()
 
     logging.info("Starting training...")
@@ -126,7 +143,8 @@ def main():
         current_lr = scheduler.get_last_lr()[0]
         logging.info(f"Current Learning Rate: {current_lr}")
 
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, config.DEVICE, epoch)
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, scheduler, criterion, config.DEVICE,
+                                                epoch)
         logging.info(f"Epoch {epoch} Training -> Loss: {train_loss}, Accuracy: {train_acc}")
 
         val_loss, val_acc = validate_one_epoch(model, test_loader, criterion, config.DEVICE)
