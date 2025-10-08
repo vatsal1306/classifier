@@ -1,8 +1,9 @@
 RUN_NAME=vit_cleaned_data
+CHKPT_NAME=model_100.pth
 
 # test script to save predictions as pickle file
 python src/predict.py \
---checkpoint runs/${RUN_NAME}/checkpoints/model_100.pth \
+--checkpoint runs/${RUN_NAME}/checkpoints/${CHKPT_NAME} \
 --config runs/${RUN_NAME}/config.py
 
 # save classification report and heatmap of confusion matrix
