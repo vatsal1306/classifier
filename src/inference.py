@@ -1,177 +1,145 @@
 import argparse
+import glob
 import logging
 import os
+import sys
+
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, root)
 
 import cv2
-import numpy as np
 import torch
-from torch.utils.data import DataLoader, ConcatDataset
 from tqdm import tqdm
 
-from src.data.dataloader import ImageClassDataset
-from src.data.transformations import get_test_transforms
 from src.models import get_model
-from src.utils.utils import import_vars_from_path
+from src.data.transformations import get_test_transforms
 
 logger = logging.getLogger(__name__)
 
 
-def collate_fn_for_inference(batch):
+def save_annotated_prediction(image_path, output_dir, pred_label, confidence):
     """
-    Custom collate function for the inference dataloader.
-    It handles batches where original images (as numpy arrays) have different sizes.
-
-    Args:
-        batch (list): A list of tuples, where each tuple is
-                      (transformed_tensor, label, original_numpy_image).
-
-    Returns:
-        tuple: A tuple containing:
-               - A stacked tensor of transformed images.
-               - A tensor of labels.
-               - A list of original numpy images.
+    Reads an image, creates a new canvas with prediction info, and saves it.
     """
-    # 1. Stack the transformed tensors and labels, which are uniform in size.
-    transformed_images = torch.stack([item[0] for item in batch], dim=0)
-    labels = torch.tensor([item[1] for item in batch])
-
-    # 2. Keep the original numpy images as a list, since they have variable sizes.
-    original_images = [item[2] for item in batch]
-
-    return transformed_images, labels, original_images
-
-
-def visualize_mistakes(mistakes, output_path, grid_size=5):
-    """
-    Creates and saves a collage of the most confident misclassified images using OpenCV.
-    """
-    if not mistakes:
-        logger.info("No mistakes to visualize.")
+    image_bgr = cv2.imread(image_path)
+    if image_bgr is None:
+        logger.warning(f"Could not read image {image_path}, skipping.")
         return
 
-    mistakes.sort(key=lambda x: x[2], reverse=True)
-    num_images = min(len(mistakes), grid_size * grid_size)
+    h, w, _ = image_bgr.shape
 
-    # Use the first image to determine a base size for the grid
-    sample_img = mistakes[0][0]
-    h, w, _ = sample_img.shape
+    # --- Create a new canvas with a white panel on the right for text ---
+    text_panel_width = 220
+    canvas = cv2.copyMakeBorder(image_bgr, 0, 0, 0, text_panel_width, cv2.BORDER_CONSTANT, value=[255, 255, 255])
 
-    # Create a grid to hold the images
-    grid_image = np.full((grid_size * h, grid_size * w, 3), 255, dtype=np.uint8)
+    # --- Prepare text ---
+    pred_lbl_str = "Human" if pred_label == 1 else "Non-Human"
+    original_basename = os.path.basename(image_path)
 
+    # --- Add text overlay on the white panel ---
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.5
-    font_color = (0, 0, 255)  # Red in BGR
-    line_type = 2
+    font_scale = 0.6
+    color = (0, 0, 0)  # Black text
+    thickness = 1
 
-    for i in range(num_images):
-        image_rgb, true_label, confidence = mistakes[i]
-        image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    # text1 = f"File: {original_basename[:20]}"  # Truncate long filenames
+    text2 = f"Prediction: {pred_lbl_str}"
+    text3 = f"Confidence: {confidence:.4f}"
 
-        # Resize image to fit the grid cell, just in case they vary slightly
-        resized_img = cv2.resize(image_bgr, (w, h))
+    # cv2.putText(canvas, text1, (w + 10, 30), font, font_scale, color, thickness)
+    cv2.putText(canvas, text2, (w + 10, 30), font, font_scale, color, thickness)
+    cv2.putText(canvas, text3, (w + 10, 60), font, font_scale, color, thickness)
 
-        row = i // grid_size
-        col = i % grid_size
-
-        # Calculate paste location
-        y_offset, x_offset = row * h, col * w
-        grid_image[y_offset:y_offset + h, x_offset:x_offset + w] = resized_img
-
-        # Add text
-        true_text = "True: Human" if true_label == 1 else "True: Non-Human"
-        pred_text = "Pred: Non-Human" if true_label == 1 else "Pred: Human"
-        conf_text = f"Conf: {confidence:.2f}"
-
-        cv2.putText(grid_image, true_text, (x_offset + 5, y_offset + 15), font, font_scale, font_color, line_type)
-        cv2.putText(grid_image, pred_text, (x_offset + 5, y_offset + 30), font, font_scale, font_color, line_type)
-        cv2.putText(grid_image, conf_text, (x_offset + 5, y_offset + 45), font, font_scale, font_color, line_type)
-
-    cv2.imwrite(output_path, grid_image)
-    logger.info(f"Mistakes collage saved to {output_path}")
+    # --- Save the final image ---
+    output_path = os.path.join(output_dir, original_basename)
+    cv2.imwrite(output_path, canvas)
 
 
-def run_inference(checkpoint_path, config):
-    """
-    Runs inference on the test set, calculates accuracy, and visualizes mistakes.
-    """
-    data_dir = config.DATA_DIR
-    output_dir = os.path.join(config.RUNS_DIR, config.RUN_NAME, "inference_results")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    os.makedirs(output_dir, exist_ok=True)
+class Predictor:
+    """A helper class to encapsulate the model and prediction logic."""
 
-    print(f"Loading model from {checkpoint_path}")
-    model = get_model(config.MODEL_NAME, pretrained=False, num_classes=config.OUTPUT_FEATURES)
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
-    model.to(device)
-    model.eval()
+    def __init__(self, model_name, checkpoint_path, device="cuda"):
+        self.device = device
+        self.transform = get_test_transforms()
 
-    print("Building test dataloader...")
-    # Use return_numpy=True to get original images for visualization
-    human_dataset = ImageClassDataset(
-        os.path.join(data_dir, "test", "human"), label=1, transform=get_test_transforms(), return_path=True
-    )
-    non_human_dataset = ImageClassDataset(
-        os.path.join(data_dir, "test", "non_human"), label=0, transform=get_test_transforms(), return_path=True
-    )
-    test_dataset = ConcatDataset([human_dataset, non_human_dataset])
-    dataloader = DataLoader(test_dataset, batch_size=config.TEST_BATCH_SIZE, shuffle=False, num_workers=4,
-                            pin_memory=True,
-                            collate_fn=collate_fn_for_inference)
+        logger.info(f"Loading model '{model_name}' from {checkpoint_path}")
+        self.model = get_model(model_name, pretrained=False, num_classes=1)
+        self.model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+        self.model.to(self.device)
+        self.model.eval()
+        logger.info("Model loaded successfully.")
 
-    correct_predictions = 0
-    total_samples = 0
-    mistakes = []
+    def predict_image(self, image_path):
+        """
+        Runs inference on a single image.
+        Returns the predicted label (0 or 1) and the confidence score.
+        """
+        image_bgr = cv2.imread(image_path)
+        if image_bgr is None:
+            return None, None
 
-    print("Running inference...")
-    with torch.no_grad():
-        for transformed_images, labels, original_images in tqdm(dataloader, desc="Inference"):
-            transformed_images = transformed_images.to(device)
-            labels = labels.to(device).float().unsqueeze(1)
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
-            outputs = model(transformed_images)
-            probs = torch.sigmoid(outputs)
-            preds = (probs > 0.5).float()
+        # Apply transformations
+        transformed = self.transform(image=image_rgb)
+        image_tensor = transformed['image'].unsqueeze(0).to(self.device)
 
-            correct_predictions += (preds == labels).sum().item()
-            total_samples += labels.size(0)
+        with torch.no_grad():
+            output = self.model(image_tensor)
+            prob = torch.sigmoid(output).item()
 
-            # Find and store mistakes for visualization
-            misclassified_mask = (preds != labels).view(-1)
-            if misclassified_mask.any():
-                # Get the indices of the misclassified samples
-                misclassified_indices = misclassified_mask.nonzero(as_tuple=True)[0]
+        pred_label = 1 if prob > 0.5 else 0
+        confidence = prob if pred_label == 1 else 1 - prob
 
-                for idx in misclassified_indices:
-                    original_img = original_images[idx]
-                    true_label = int(labels[idx].item())
-                    pred_prob = probs[idx].item()
+        return pred_label, confidence
 
-                    # Confidence is the probability of the predicted class
-                    confidence = pred_prob if preds[idx].item() == 1 else 1 - pred_prob
 
-                    mistakes.append((original_img, true_label, confidence))
+def main(args):
+    """Main function to orchestrate the inference process."""
+    if not os.path.exists(args.input):
+        logger.error(f"Input path does not exist: {args.input}")
+        return
 
-    # --- Results ---
-    if total_samples > 0:
-        accuracy = correct_predictions / total_samples
-        logger.info(f"\n--- Inference Complete ---")
-        logger.info(f"Accuracy on Test Set: {accuracy:.4f}")
+    os.makedirs(args.output, exist_ok=True)
+    device = "cuda:1" if torch.cuda.is_available() else "cpu"
+
+    # --- Get list of image paths ---
+    if os.path.isdir(args.input):
+        image_paths = glob.glob(os.path.join(args.input, '**', '*.[jJ][pP]*[gG]'), recursive=True) + \
+                      glob.glob(os.path.join(args.input, '**', '*.[pP][nN][gG]'), recursive=True)
+        logger.info(f"Found {len(image_paths)} images in directory: {args.input}")
     else:
-        logger.warning("No samples were processed during inference.")
+        image_paths = [args.input]
+        logger.info(f"Processing single image: {args.input}")
 
-    # --- Visualize ---
-    visualize_mistakes(mistakes, os.path.join(output_dir, "worst_mistakes.jpg"))
+    if not image_paths:
+        logger.warning("No images found to process.")
+        return
+
+    # --- Initialize Predictor ---
+    predictor = Predictor(args.model_name, args.checkpoint, device)
+
+    # --- Run Inference Loop ---
+    for img_path in tqdm(image_paths, desc="Running Inference"):
+        pred_label, confidence = predictor.predict_image(img_path)
+        if pred_label is not None:
+            save_annotated_prediction(img_path, args.output, pred_label, confidence)
+
+    logger.info(f"Inference complete. Results saved to: {args.output}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run inference and visualize model mistakes.")
-    parser.add_argument("--checkpoint", type=str, required=True,
+    parser = argparse.ArgumentParser(description="Standalone inference script for human/non-human classification.")
+    parser.add_argument("-i", "--input", type=str, required=True,
+                        help="Path to a single image or a directory of images.")
+    parser.add_argument("-o", "--output", type=str, required=True,
+                        help="Path to the directory where output images will be saved.")
+    parser.add_argument("-c", "--checkpoint", type=str, required=True,
                         help="Path to the trained model checkpoint (.pth file).")
-    parser.add_argument("--config_pth", type=str, required=True, help="Path to the config.py file.")
+    parser.add_argument("-m", "--model_name", type=str, required=True,
+                        choices=['vit_b_16', 'vit_l_32', 'efficientnet_v2_s'],
+                        help="Name of the model architecture to use.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-    config = import_vars_from_path(args.config_pth)
-    run_inference(args.checkpoint, config)
+    main(args)
