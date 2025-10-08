@@ -26,12 +26,3 @@ python src/viz_predictions.py \
 --top_n 100 \
 --mistake_type nonhuman_as_human
 
-
-### Sync local run checkpoints and files to google drive
-rm -r runs/${RUN_NAME}/__pycache__
-rm -r runs/${RUN_NAME}/wandb
-
-python /vidgen2/vatsal/gdrive/upload.py \
---token /vidgen2/vatsal/gdrive/token.json \
---dir runs/${RUN_NAME} \
---parent 1JTyIP_maAXurSFMcDDruJRVgLdS_Z7Pe
