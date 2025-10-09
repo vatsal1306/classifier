@@ -137,7 +137,7 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--checkpoint", type=str, required=True,
                         help="Path to the trained model checkpoint (.pth file).")
     parser.add_argument("-m", "--model_name", type=str, required=True,
-                        choices=['vit_b_16', 'vit_l_32', 'efficientnet_v2_s'],
+                        choices=['vit_b_16', 'vit_l_32', 'efficientnet_v2_l'],
                         help="Name of the model architecture to use.")
     args = parser.parse_args()
 
