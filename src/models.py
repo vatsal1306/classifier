@@ -32,10 +32,13 @@ def _build_vit(model_name, weights, num_classes):
     model.heads.head = nn.Linear(num_ftrs, num_classes)
     return model
 
+
 def _build_efficientnet(model_name, weights, num_classes):
     """Helper function to build and modify an EfficientNet model."""
     if model_name == "efficientnet_v2_l":
         model = models.efficientnet_v2_l(weights=weights)
+    elif model_name == "efficientnet_v2_s":
+        model = models.efficientnet_v2_s(weights=weights)
     else:
         raise ValueError(f"Unsupported EfficientNet variant: {model_name}")
 
@@ -43,6 +46,7 @@ def _build_efficientnet(model_name, weights, num_classes):
     num_ftrs = model.classifier[-1].in_features
     model.classifier[-1] = nn.Linear(num_ftrs, num_classes)
     return model
+
 
 # --- Model and Weight Registries ---
 
@@ -53,6 +57,7 @@ WEIGHTS_MAPPING = {
     "vit_b_16": models.ViT_B_16_Weights.DEFAULT,
     "vit_l_32": models.ViT_L_32_Weights.DEFAULT,
     "efficientnet_v2_l": models.EfficientNet_V2_L_Weights.DEFAULT,
+    "efficientnet_v2_s": models.EfficientNet_V2_S_Weights.DEFAULT,
 }
 
 # The main registry mapping model names to their builder functions
@@ -61,7 +66,8 @@ MODEL_REGISTRY = {
     "resnet34": _build_resnet,
     "vit_b_16": _build_vit,
     "vit_l_32": _build_vit,
-    "efficientnet_v2_l": _build_efficientnet
+    "efficientnet_v2_l": _build_efficientnet,
+    "efficientnet_v2_s": _build_efficientnet,
 }
 
 
