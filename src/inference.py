@@ -2,19 +2,93 @@ import argparse
 import glob
 import logging
 import os
-import sys
 
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, root)
-
+import albumentations as A
 import cv2
 import torch
+import torch.nn as nn
+from albumentations.pytorch import ToTensorV2
+from torchvision import models
 from tqdm import tqdm
 
-from src.models import get_model
-from src.data.transformations import get_test_transforms
-
 logger = logging.getLogger(__name__)
+
+# ImageNet normalization statistics
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
+# The target size for the model input
+IMAGE_SIZE = 224
+
+
+def get_test_transforms():
+    """
+    Returns the data transformation pipeline for the validation/test set using Albumentations.
+    """
+    return A.Compose([
+        A.Resize(height=IMAGE_SIZE, width=IMAGE_SIZE, interpolation=cv2.INTER_LANCZOS4),
+        A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ToTensorV2(),
+    ])
+
+
+def _build_efficientnet(model_name, weights, num_classes):
+    """Helper function to build and modify an EfficientNet model."""
+    if model_name == "efficientnet_v2_l":
+        model = models.efficientnet_v2_l(weights=weights)
+    elif model_name == "efficientnet_v2_s":
+        model = models.efficientnet_v2_s(weights=weights)
+    else:
+        raise ValueError(f"Unsupported EfficientNet variant: {model_name}")
+
+    # The classifier in EfficientNet is the last layer of the `classifier` sequential block
+    num_ftrs = model.classifier[-1].in_features
+    model.classifier[-1] = nn.Linear(num_ftrs, num_classes)
+    return model
+
+
+# A mapping from model names to their pre-trained weight enums
+WEIGHTS_MAPPING = {
+    "resnet18": models.ResNet18_Weights.DEFAULT,
+    "resnet34": models.ResNet34_Weights.DEFAULT,
+    "vit_b_16": models.ViT_B_16_Weights.DEFAULT,
+    "vit_l_32": models.ViT_L_32_Weights.DEFAULT,
+    "efficientnet_v2_l": models.EfficientNet_V2_L_Weights.DEFAULT,
+    "efficientnet_v2_s": models.EfficientNet_V2_S_Weights.DEFAULT,
+}
+
+# The main registry mapping model names to their builder functions
+MODEL_REGISTRY = {
+    "efficientnet_v2_l": _build_efficientnet,
+    "efficientnet_v2_s": _build_efficientnet,
+}
+
+
+def get_model(model_name, pretrained=True, num_classes=1):
+    """
+    Loads a model from the registry, replaces the classification head, and loads pre-trained weights if specified.
+
+    Args:
+        model_name (str): The name of the model architecture to load.
+        pretrained (bool): Whether to load pre-trained ImageNet weights.
+        num_classes (int): The number of output features for the final layer.
+
+    Returns:
+        torch.nn.Module: The modified model.
+    """
+    if model_name not in MODEL_REGISTRY:
+        raise ValueError(f"Model '{model_name}' is not supported. Available models: {list(MODEL_REGISTRY.keys())}")
+
+    # 1. Get the correct builder function from the registry
+    model_builder = MODEL_REGISTRY[model_name]
+
+    # 2. Determine which weights to use (if any)
+    weights = WEIGHTS_MAPPING[model_name] if pretrained else None
+
+    # 3. Build the model
+    model = model_builder(model_name=model_name, weights=weights, num_classes=num_classes)
+
+    return model
 
 
 def save_annotated_prediction(image_path, output_dir, pred_label, confidence):
