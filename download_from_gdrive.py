@@ -32,7 +32,7 @@ except ImportError:
     print("tqdm library not found. Please install it with 'uv add tqdm' or 'pip install tqdm'")
     sys.exit(1)
 
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = ['https://www.googleapis.com/auth/drive']
 
 
 def build_creds_from_token_file(token_file, save_token_path=None):

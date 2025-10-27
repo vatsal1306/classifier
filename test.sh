@@ -1,4 +1,4 @@
-RUN_NAME=vit_cleaned_data
+RUN_NAME=effnet_v2_s_prod_statue_coslr
 CHKPT_NAME=model_100.pth
 
 # test script to save predictions as pickle file

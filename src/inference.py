@@ -2,6 +2,8 @@ import argparse
 import glob
 import logging
 import os
+import json
+import shutil
 
 import albumentations as A
 import cv2
@@ -162,7 +164,7 @@ class Predictor:
             output = self.model(image_tensor)
             prob = torch.sigmoid(output).item()
 
-        pred_label = 1 if prob > 0.5 else 0
+        pred_label = 1 if prob > 0.11 else 0
         confidence = prob if pred_label == 1 else 1 - prob
 
         return pred_label, confidence
@@ -174,8 +176,12 @@ def main(args):
         logger.error(f"Input path does not exist: {args.input}")
         return
 
-    os.makedirs(args.output, exist_ok=True)
-    device = "cuda:1" if torch.cuda.is_available() else "cpu"
+    dest_img_dir = os.path.join(args.output, 'img')
+    dest_json_pth = os.path.join(args.output, 'data.json')
+    os.makedirs(dest_img_dir, exist_ok=True)
+    device = args.device
+    
+    results_dict = {}
 
     # --- Get list of image paths ---
     if os.path.isdir(args.input):
@@ -189,6 +195,9 @@ def main(args):
     if not image_paths:
         logger.warning("No images found to process.")
         return
+    
+    if args.limit:
+        image_paths = image_paths[:args.limit]
 
     # --- Initialize Predictor ---
     predictor = Predictor(args.model_name, args.checkpoint, device)
@@ -196,9 +205,25 @@ def main(args):
     # --- Run Inference Loop ---
     for img_path in tqdm(image_paths, desc="Running Inference"):
         pred_label, confidence = predictor.predict_image(img_path)
-        if pred_label is not None:
-            save_annotated_prediction(img_path, args.output, pred_label, confidence)
+        # if pred_label is not None:
+            # save_annotated_prediction(img_path, args.output, pred_label, confidence)
+        results_dict[os.path.basename(img_path)] = {"label": pred_label, "reviewed": False}
+        shutil.copy(img_path, os.path.join(dest_img_dir, os.path.basename(img_path)))
 
+    # Load existing data if file exists
+    if os.path.exists(dest_json_pth):
+        with open(dest_json_pth, "r") as f:
+            existing = json.load(f)
+    else:
+        existing = {}
+
+    # Merge (existing keys will be updated)
+    existing.update(results_dict)
+
+    # Save back
+    with open(dest_json_pth, "w") as f:
+        json.dump(existing, f, indent=4)
+        
     logger.info(f"Inference complete. Results saved to: {args.output}")
 
 
@@ -211,8 +236,10 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--checkpoint", type=str, required=True,
                         help="Path to the trained model checkpoint (.pth file).")
     parser.add_argument("-m", "--model_name", type=str, required=True,
-                        choices=['vit_b_16', 'vit_l_32', 'efficientnet_v2_l'],
+                        choices=['vit_b_16', 'vit_l_32', 'efficientnet_v2_l', 'efficientnet_v2_s'],
                         help="Name of the model architecture to use.")
+    parser.add_argument("-d", "--device", type=str, default="cuda")
+    parser.add_argument("-l", "--limit", type=int, help="Limit how many images to save")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

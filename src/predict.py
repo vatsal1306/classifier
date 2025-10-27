@@ -25,6 +25,7 @@ def run_predictions(checkpoint_path, config):
     Runs the model on the test set and saves all predictions to a pickle file.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cpu"
     run_dir = os.path.join(config.RUNS_DIR, config.RUN_NAME)
     output_pkl_path = os.path.join(run_dir, "predictions.pkl")
 

@@ -1,8 +1,11 @@
 import os
 import shutil
+import json
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tqdm import tqdm
+import pandas as pd
 
 
 def copy_files():
@@ -210,6 +213,90 @@ def determine_max_workers():
         w = min_workers
     return w
 
+def shuffle_data(src_dir, dest_dir):
+    n = 10000
+    src_json = os.path.join(src_dir, 'data.json')
+    src_img_dir = os.path.join(src_dir, 'img')
+    dest_img_dir = os.path.join(dest_dir, 'img')
+    dest_json = os.path.join(dest_dir, 'data.json')
+    
+    # Load existing metadata
+    with open(src_json, "r") as f:
+        data = json.load(f)
+
+    if not data:
+        print("No entries found in source JSON.")
+        return
+
+    os.makedirs(dest_img_dir, exist_ok=True)
+
+    # Pick n random (or first n) keys
+    keys = list(data.keys())
+    if n > len(keys):
+        n = len(keys)
+
+    selected_keys = random.sample(keys, n)  # or random.sample(keys, n) for random selection
+
+    # New dict for moved entries
+    moved_entries = {}
+
+    for key in selected_keys:
+        src_path = os.path.join(src_img_dir, key)
+        dest_path = os.path.join(dest_img_dir, key)
+
+        if not os.path.exists(src_path):
+            print(f"⚠️  File missing: {src_path} (skipping)")
+            continue
+
+        # Move the image
+        shutil.move(src_path, dest_path)
+
+        # Transfer the metadata
+        moved_entries[key] = data[key]
+
+        # Remove from original dict
+        del data[key]
+
+    # Save updated source JSON (with removed entries)
+    tmp_path = src_json + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(data, f, indent=4)
+    os.replace(tmp_path, src_json)
+
+    # Write new JSON for moved files
+    with open(dest_json, "w") as f:
+        json.dump(moved_entries, f, indent=4)
+
+    print(f"✅ Moved {len(moved_entries)} images from '{src_img_dir}' → '{dest_img_dir}'")
+    print(f"📝 Updated source JSON: {src_json}")
+    print(f"🆕 Created destination JSON: {dest_json}")   
+    
+
+class JsonToDf:
+    def __init__(self, json_pth):
+        self.json_pth = json_pth
+        self.df = self._load_df()
+    
+    def _load_df(self): 
+        with open(self.json_pth, "r") as f:
+            data = json.load(f)
+
+        # Convert to DataFrame
+        df = pd.DataFrame.from_dict(data, orient="index").reset_index()
+
+        # Rename columns
+        df.columns = ["image", "label", "reviewed"]
+        return df
+
+    def get_count(self, column_name):
+        counts = self.df[column_name].value_counts()
+        return counts
+    
+    def get_label_cnt_for_reviewed(self):
+        filtered_counts = self.df[self.df["reviewed"] == True]["label"].value_counts()
+        return filtered_counts
+    
+
 
 if __name__ == '__main__':
     # Parameters
@@ -290,6 +377,17 @@ if __name__ == '__main__':
     dest_non_human = "/vidgen2/vatsal/classifier/dataset/processed/train/non_human"
 
     # You could set max_workers = os.cpu_count() * 2 or some fixed number
-    n_workers = determine_max_workers()
-    print(f"Using {n_workers} threads for copying")
-    parallel_copy(list_human, list_non_human, dest_human, dest_non_human, max_workers=n_workers)
+    # n_workers = determine_max_workers()
+    # print(f"Using {n_workers} threads for copying")
+    # parallel_copy(list_human, list_non_human, dest_human, dest_non_human, max_workers=n_workers)
+    
+    src_dir = 'dataset/for_labelling/to_give_for_labelling/batch_1'
+    dest_dir = 'dataset/for_labelling/to_give_for_labelling/batch_2'
+    # shuffle_data(src_dir, dest_dir)
+    
+    json_pth = 'dataset/for_labelling/to_give_for_labelling/batch_1/data.json'
+    df_obj = JsonToDf(json_pth)
+    print(df_obj.get_count('label'))
+    print(df_obj.get_count('reviewed'))
+    print(df_obj.get_label_cnt_for_reviewed())
+    

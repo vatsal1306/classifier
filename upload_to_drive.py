@@ -32,7 +32,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
-SCOPES = ['https://www.googleapis.com/auth/drive.file']  # least-privilege for uploads
+SCOPES = ['https://www.googleapis.com/auth/drive']  # least-privilege for uploads
 
 
 def load_json(path):
