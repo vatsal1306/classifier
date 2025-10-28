@@ -121,20 +121,22 @@ def build_dataloader(split, config):
     if split not in ['train', 'test']:
         raise ValueError(f"Invalid split name: {split}. Must be 'train' or 'test'.")
 
-    human_path = os.path.join(config.DATA_DIR, split, "human")
-    non_human_path = os.path.join(config.DATA_DIR, split, "non_human")
+    # for human, 0 -> non_human, 1 -> human
+    # for nsfw, 0 -> safe, 1 -> not_safe
+    not_safe_path = os.path.join(config.DATA_DIR, split, "not_safe")
+    safe_path = os.path.join(config.DATA_DIR, split, "safe")
 
     # Create datasets for each class
     transform = get_train_transforms() if split == 'train' else get_test_transforms()
-    human_dataset = ImageClassDataset(human_path, label=1, transform=transform)
-    non_human_dataset = ImageClassDataset(non_human_path, label=0, transform=transform)
+    not_safe_dataset = ImageClassDataset(not_safe_path, label=1, transform=transform)
+    safe_dataset = ImageClassDataset(safe_path, label=0, transform=transform)
 
     if split == 'train':
         # Determine majority and minority classes
-        if len(human_dataset) >= len(non_human_dataset):
-            majority_ds, minority_ds = human_dataset, non_human_dataset
+        if len(not_safe_dataset) >= len(safe_dataset):
+            majority_ds, minority_ds = not_safe_dataset, safe_dataset
         else:
-            majority_ds, minority_ds = non_human_dataset, human_dataset
+            majority_ds, minority_ds = safe_dataset, not_safe_dataset
 
         # The sampler needs indices relative to the concatenated dataset
         majority_indices = list(range(len(majority_ds)))
@@ -152,7 +154,7 @@ def build_dataloader(split, config):
         )
     else:  # 'test' split
         # For validation, a standard shuffled dataloader is fine.
-        full_dataset = ConcatDataset([human_dataset, non_human_dataset])
+        full_dataset = ConcatDataset([not_safe_dataset, safe_dataset])
         dataloader = DataLoader(
             full_dataset,
             batch_size=config.TEST_BATCH_SIZE,
