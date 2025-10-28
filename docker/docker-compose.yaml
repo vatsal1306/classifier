@@ -20,7 +20,7 @@ services:
     # Mount the current directory on your host to /app in the container.
     # This means code changes you make locally are immediately reflected inside the container.
     volumes:
-      - ../.:/vidgen2/classifier
+      - ../.:/classifier
     # GPU configuration to grant the container access to all available GPUs
     deploy:
       resources:

@@ -52,7 +52,7 @@ def init_wandb(sync_mode: Literal["online", "offline", "disabled"] = 'online'):
     # Initialize WandB
     wandb.login(key=os.environ.get('WANDB_API_KEY', ''))
     wandb.init(
-        project="human_classification",
+        project="nsfw",
         name=config.RUN_NAME,
         dir=os.path.join(config.RUNS_DIR, config.RUN_NAME),
         notes=config.DESCRIPTION,
