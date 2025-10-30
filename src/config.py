@@ -17,7 +17,7 @@ OUTPUT_FEATURES = NUM_CLASSES  # IMPORTANT: 3 logits for multi-class
 
 # --- TRAINING ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-EPOCHS = 100
+EPOCHS = 20
 LEARNING_RATE = 1e-4
 OPTIMIZER = "SGD"  # ["AdamW", "SGD"]
 SCHEDULER = "CosineAnnealingWarmRestarts"  # ["CosineAnnealingLR", "CosineAnnealingWarmRestarts"]
