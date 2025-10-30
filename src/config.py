@@ -2,8 +2,8 @@ import torch
 
 # --- DATASET & DATALOADER ---
 DATA_DIR = "dataset/multiclass"
-TRAIN_BATCH_SIZE = 512
-TEST_BATCH_SIZE = 512
+TRAIN_BATCH_SIZE = 256
+TEST_BATCH_SIZE = 256
 
 # --- CLASSES ---
 # 0 -> safe, 1 -> not_safe, 2 -> kiss
