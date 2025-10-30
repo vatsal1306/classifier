@@ -1,7 +1,7 @@
 import torch
 
 # --- DATASET & DATALOADER ---
-DATA_DIR = "dataset/binary"
+DATA_DIR = "dataset/multiclass"
 TRAIN_BATCH_SIZE = 64
 TEST_BATCH_SIZE = 64
 

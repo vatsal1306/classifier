@@ -167,7 +167,7 @@ def main():
 
     # --- Setup Logger / WandB ---
     setup_logger(os.path.join(run_dir, "train.log"))
-    wb = init_wandb()
+    wb = init_wandb(sync_mode='offline')
 
     logging.info(f"Starting new run: {RUN_NAME}")
     logging.info(f"Device: {config.DEVICE}")
