@@ -11,7 +11,6 @@ def _build_resnet(model_name, weights, num_classes):
     elif model_name == "resnet34":
         model = models.resnet34(weights=weights)
     else:
-        # This case should not be reached if the registry is set up correctly
         raise ValueError(f"Unsupported ResNet variant: {model_name}")
 
     num_ftrs = model.fc.in_features
@@ -42,7 +41,6 @@ def _build_efficientnet(model_name, weights, num_classes):
     else:
         raise ValueError(f"Unsupported EfficientNet variant: {model_name}")
 
-    # The classifier in EfficientNet is the last layer of the `classifier` sequential block
     num_ftrs = model.classifier[-1].in_features
     model.classifier[-1] = nn.Linear(num_ftrs, num_classes)
     return model
@@ -50,7 +48,6 @@ def _build_efficientnet(model_name, weights, num_classes):
 
 # --- Model and Weight Registries ---
 
-# A mapping from model names to their pre-trained weight enums
 WEIGHTS_MAPPING = {
     "resnet18": models.ResNet18_Weights.DEFAULT,
     "resnet34": models.ResNet34_Weights.DEFAULT,
@@ -60,7 +57,6 @@ WEIGHTS_MAPPING = {
     "efficientnet_v2_s": models.EfficientNet_V2_S_Weights.DEFAULT,
 }
 
-# The main registry mapping model names to their builder functions
 MODEL_REGISTRY = {
     "resnet18": _build_resnet,
     "resnet34": _build_resnet,
@@ -71,28 +67,14 @@ MODEL_REGISTRY = {
 }
 
 
-def get_model(model_name, pretrained=True, num_classes=1):
+def get_model(model_name, pretrained=True, num_classes=3):
     """
     Loads a model from the registry, replaces the classification head, and loads pre-trained weights if specified.
-
-    Args:
-        model_name (str): The name of the model architecture to load.
-        pretrained (bool): Whether to load pre-trained ImageNet weights.
-        num_classes (int): The number of output features for the final layer.
-
-    Returns:
-        torch.nn.Module: The modified model.
     """
     if model_name not in MODEL_REGISTRY:
         raise ValueError(f"Model '{model_name}' is not supported. Available models: {list(MODEL_REGISTRY.keys())}")
 
-    # 1. Get the correct builder function from the registry
-    model_builder = MODEL_REGISTRY[model_name]
-
-    # 2. Determine which weights to use (if any)
+    builder = MODEL_REGISTRY[model_name]
     weights = WEIGHTS_MAPPING[model_name] if pretrained else None
-
-    # 3. Build the model
-    model = model_builder(model_name=model_name, weights=weights, num_classes=num_classes)
-
+    model = builder(model_name=model_name, weights=weights, num_classes=num_classes)
     return model

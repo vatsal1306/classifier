@@ -1,29 +1,44 @@
 import torch
 
 # --- DATASET & DATALOADER ---
-DATA_DIR = "dataset/binary"  # Directory where the processed shards are stored
-TRAIN_BATCH_SIZE = 64  # Batch size for training (32 human, 32 non-human)
-TEST_BATCH_SIZE = 64  # Batch size for validation/testing
+DATA_DIR = "dataset/binary"
+TRAIN_BATCH_SIZE = 64
+TEST_BATCH_SIZE = 64
+
+# --- CLASSES ---
+# 0 -> safe, 1 -> not_safe, 2 -> kiss
+CLASS_NAMES = ["safe", "not_safe", "kiss"]
+NUM_CLASSES = 3
 
 # --- MODEL ---
-MODEL_NAME = "efficientnet_v2_l"  # Model architecture to use (e.g., "resnet18", "resnet34")
-PRETRAINED = True  # Whether to use a model pre-trained on ImageNet
-OUTPUT_FEATURES = 1  # Number of output features (1 for binary classification with BCEWithLogitsLoss)
+MODEL_NAME = "efficientnet_v2_s"
+PRETRAINED = True
+OUTPUT_FEATURES = NUM_CLASSES  # IMPORTANT: 3 logits for multi-class
 
 # --- TRAINING ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-EPOCHS = 100  # Total number of training epochs
-LEARNING_RATE = 0.0001  # Initial learning rate for the optimizer
-OPTIMIZER = "SGD"  # Optimizer to use (e.g., "AdamW", "SGD")
-SCHEDULER = "CosineAnnealingWarmRestarts"  # CosineAnnealingLR, CosineAnnealingWarmRestarts
-T_0 = 10         # Number of epochs for the first restart.
-T_MULT = 2       # A factor to increase T_i after a restart. T_i = T_i * T_mult
-ETA_MIN = 1e-10   # Minimum learning rate.
-WEIGHT_DECAY = 0.001  # Weight decay factor for regularization
-LOSS_FUNCTION = "BCEWithLogitsLoss"  # Loss function for training
+EPOCHS = 100
+LEARNING_RATE = 1e-4
+OPTIMIZER = "SGD"  # ["AdamW", "SGD"]
+SCHEDULER = "CosineAnnealingWarmRestarts"  # ["CosineAnnealingLR", "CosineAnnealingWarmRestarts"]
+T_0 = 10
+T_MULT = 2
+ETA_MIN = 1e-10
+WEIGHT_DECAY = 1e-3
+
+# Loss (multi-class)
+LOSS_FUNCTION = "CrossEntropy"
+LABEL_SMOOTHING = 0.1
+
+# --- SAMPLER (anchored oversampling epoch rule) ---
+# Epoch ends when the majority (anchor) class is exhausted (no replacement for anchor, with replacement for others)
+ANCHOR_CLASS = "auto"            # or set to an int 0/1/2
+DROP_LAST = False                 # drop last partial batch
+BALANCED_PER_BATCH = True        # aim for as-even-as-possible within each batch
+SEED = 42
 
 # --- CHECKPOINTS & LOGGING ---
-RUNS_DIR = "runs"  # Main directory to store all training runs
-DESCRIPTION = "test run"  # Description for the current run
-RUN_NAME = "test"  # Name for the current run (used in the run directory)
-SAVE_CHECKPOINT_EPOCHS = 5  # Save a model checkpoint every N epochs
+RUNS_DIR = "runs"
+DESCRIPTION = "3-class anchored-oversample run"
+RUN_NAME = "test"
+SAVE_CHECKPOINT_EPOCHS = 5

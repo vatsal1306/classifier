@@ -3,8 +3,10 @@ import logging
 import os
 import random
 from itertools import cycle
+from typing import Iterator, List, Sequence
 
 import cv2
+import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader, Sampler, ConcatDataset
 
@@ -12,6 +14,21 @@ from src.data.transformations import get_train_transforms, get_test_transforms
 
 # Get a logger instance for this module. It will inherit the root logger's configuration.
 logger = logging.getLogger(__name__)
+
+IMG_PATTERNS = [
+    "**/*.[jJ][pP]*[gG]",  # jpg / jpeg variants
+    "**/*.[pP][nN][gG]",  # png
+    "**/*.[wW][eE][bB][pP]",  # webp
+    "**/*.[bB][mM][pP]",  # bmp
+    "**/*.[tT][iI][fF]*",  # tif / tiff
+]
+
+
+def _list_images(root_dir: str) -> List[str]:
+    paths = []
+    for pat in IMG_PATTERNS:
+        paths.extend(glob.glob(os.path.join(root_dir, pat), recursive=True))
+    return sorted(paths)
 
 
 class ImageClassDataset(Dataset):
@@ -23,13 +40,14 @@ class ImageClassDataset(Dataset):
         """
         Args:
             root_dir (str): Directory with all the images for one class.
-            label (int): The label to assign to all images in this dataset.
+            label (int): Class id (0..NUM_CLASSES-1).
             transform (callable, optional): Albumentations transform to be applied.
             return_path (bool): If True, __getitem__ returns the image path.
         """
-        self.image_paths = glob.glob(os.path.join(root_dir, '**', '*.[jJ][pP]*[gG]'), recursive=True) + \
-                           glob.glob(os.path.join(root_dir, '**', '*.[pP][nN][gG]'), recursive=True)
-        self.label = label
+        self.image_paths = _list_images(root_dir) if os.path.isdir(root_dir) else []
+        if not self.image_paths:
+            logger.warning(f"No images found in: {root_dir}")
+        self.label = int(label)
         self.transform = transform
         self.return_path = return_path
 
@@ -42,18 +60,16 @@ class ImageClassDataset(Dataset):
         image_bgr = cv2.imread(img_path)
         if image_bgr is None:
             logger.warning(f"Could not read image {img_path}. Returning a dummy tensor.")
-            # Return a dummy sample, which can be filtered out later if needed
-            return torch.randn(3, 224, 224), self.label
+            return torch.randn(3, 224, 224), self.label if not self.return_path else (torch.randn(3, 224, 224),
+                                                                                      self.label, img_path)
 
         # Convert from BGR to RGB color space
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
         if self.transform:
-            # Albumentations expects a dictionary
             transformed = self.transform(image=image_rgb)
             image_tensor = transformed['image']
         else:
-            # Fallback: convert numpy array to tensor and normalize
             image_tensor = torch.from_numpy(image_rgb.transpose((2, 0, 1))).float().div(255)
 
         if self.return_path:
@@ -62,89 +78,181 @@ class ImageClassDataset(Dataset):
             return image_tensor, self.label
 
 
-class BalancedBatchSampler(Sampler):
+# ---------------- Anchored Balanced Sampler ---------------- #
+
+class AnchoredBalancedBatchSampler(Sampler[List[int]]):
     """
-    A custom PyTorch Sampler to create balanced batches.
-    It ensures each batch has an equal number of samples from two datasets.
-    It oversamples the minority class to match the majority class.
+    Anchored balanced batching for multi-class classification.
+
+    Rules:
+      - Determine anchor class (largest cardinality or user-specified).
+      - Build batches of size `batch_size` (as balanced as possible across classes).
+      - Anchor indices are consumed WITHOUT replacement.
+      - Other classes are sampled WITH replacement (cycled).
+      - Epoch ends immediately when the anchor class is exhausted.
     """
 
-    def __init__(self, majority_indices, minority_indices, batch_size):
-        """
-        Args:
-            majority_indices (list): List of indices for the majority class dataset.
-            minority_indices (list): List of indices for the minority class dataset.
-            batch_size (int): The total batch size. Must be an even number.
-        """
-        super().__init__()
-        if batch_size % 2 != 0:
-            raise ValueError("batch_size must be an even number for balanced sampling.")
-
-        self.majority_indices = majority_indices
-        self.minority_indices = minority_indices
+    def __init__(
+            self,
+            labels: Sequence[int],
+            batch_size: int,
+            num_classes: int,
+            anchor_class: int | str = "auto",
+            drop_last: bool = True,
+            seed: int = 42,
+            balanced_per_batch: bool = True,
+    ):
+        super().__init__(None)
+        assert batch_size >= 1, "batch_size must be >= 1"
         self.batch_size = batch_size
-        self.half_batch = batch_size // 2
+        self.num_classes = num_classes
+        self.drop_last = drop_last
+        self.seed = seed
+        self.balanced_per_batch = balanced_per_batch
 
-    def __iter__(self):
-        # Shuffle both lists of indices
-        random.shuffle(self.majority_indices)
-        random.shuffle(self.minority_indices)
+        self.labels = np.asarray(labels, dtype=np.int64)
+        classes = list(range(num_classes))
+        # class buckets
+        buckets = {c: np.where(self.labels == c)[0].tolist() for c in classes}
+        counts = {c: len(buckets[c]) for c in classes}
 
-        # Use itertools.cycle to endlessly loop over the minority indices
-        minority_iterator = cycle(self.minority_indices)
+        # choose anchor
+        if anchor_class == "auto":
+            self.anchor = max(counts, key=counts.get)
+        else:
+            self.anchor = int(anchor_class)
 
-        # Iterate through the majority indices in chunks of half_batch
-        for i in range(0, len(self.majority_indices), self.half_batch):
-            majority_batch_indices = self.majority_indices[i: i + self.half_batch]
+        rng = random.Random(seed)
+        for c in classes:
+            rng.shuffle(buckets[c])
 
-            # If the last majority chunk is smaller than half_batch, we skip it.
-            if len(majority_batch_indices) < self.half_batch:
+        self.anchor_indices = buckets[self.anchor]
+        self.minority_cycles = {
+            c: cycle(buckets[c] if buckets[c] else [None]) for c in classes if c != self.anchor
+        }
+        self.minority_nonempty = [c for c in classes if c != self.anchor and counts[c] > 0]
+        self.classes = classes
+
+        # per-batch allocation
+        if balanced_per_batch:
+            base = batch_size // num_classes
+            rem = batch_size % num_classes
+            class_order = [self.anchor] + [c for c in classes if c != self.anchor]
+            alloc = {c: base for c in classes}
+            for k in range(rem):
+                alloc[class_order[k % len(class_order)]] += 1
+            # ensure anchor appears
+            if alloc[self.anchor] == 0:
+                alloc[self.anchor] = 1
+                for c in class_order[1:]:
+                    if alloc[c] > 0:
+                        alloc[c] -= 1
+                        break
+            self.alloc = alloc
+        else:
+            self.alloc = {c: 0 for c in classes}
+            self.alloc[self.anchor] = 1
+            others = [c for c in classes if c != self.anchor]
+            self.alloc[others[0]] = batch_size - 1
+
+        # number of batches in an epoch: anchor exhaustion
+        self._batches = (len(self.anchor_indices) + self.alloc[self.anchor] - 1) // max(1, self.alloc[self.anchor])
+
+    def __iter__(self) -> Iterator[List[int]]:
+        anchor_ptr = 0
+        produced = 0
+
+        for _ in range(self._batches):
+            batch: List[int] = []
+
+            for c in self.classes:
+                need = self.alloc[c]
+                if need <= 0:
+                    continue
+
+                if c == self.anchor:
+                    available = len(self.anchor_indices) - anchor_ptr
+                    take = min(need, available)
+                    if take > 0:
+                        batch.extend(self.anchor_indices[anchor_ptr:anchor_ptr + take])
+                        anchor_ptr += take
+
+                    deficit = need - take
+                    for k in range(deficit):
+                        if self.minority_nonempty:
+                            cc = self.minority_nonempty[(produced + k) % len(self.minority_nonempty)]
+                            nxt = next(self.minority_cycles[cc])
+                            if nxt is not None:
+                                batch.append(nxt)
+                else:
+                    for _k in range(need):
+                        if c in self.minority_cycles:
+                            nxt = next(self.minority_cycles[c])
+                            if nxt is not None:
+                                batch.append(nxt)
+
+            # enforce exact batch size when dropping last
+            if len(batch) > self.batch_size:
+                batch = batch[: self.batch_size]
+
+            if len(batch) == self.batch_size or (not self.drop_last and len(batch) > 0):
+                produced += 1
+                yield batch
+
+            # stop epoch once anchor exhausted
+            if anchor_ptr >= len(self.anchor_indices):
                 break
 
-            minority_batch_indices = [next(minority_iterator) for _ in range(self.half_batch)]
-
-            # Combine and shuffle the batch indices
-            batch_indices = majority_batch_indices + minority_batch_indices
-            random.shuffle(batch_indices)
-            yield batch_indices
-
-    def __len__(self):
-        # The number of batches is determined by the majority class
-        return len(self.majority_indices) // self.half_batch
+    def __len__(self) -> int:
+        return self._batches
 
 
-def build_dataloader(split, config):
+# ---------------- Builder ---------------- #
+
+def build_dataloader(split, cfg):
     """
-    Builds a standard PyTorch DataLoader. For the 'train' split, it uses
-    a custom BalancedBatchSampler to ensure 50/50 class distribution in each batch.
+    Builds a standard PyTorch DataLoader.
+
+    Train:
+      - Uses AnchoredBalancedBatchSampler to implement your epoch rule
+        (exhaust majority class per epoch; minority sampled with replacement).
+    Test:
+      - Standard DataLoader (shuffle=True to match your prior style).
     """
     if split not in ['train', 'test']:
         raise ValueError(f"Invalid split name: {split}. Must be 'train' or 'test'.")
 
-    # for human, 0 -> non_human, 1 -> human
-    # for nsfw, 0 -> safe, 1 -> not_safe
-    not_safe_path = os.path.join(config.DATA_DIR, split, "not_safe")
-    safe_path = os.path.join(config.DATA_DIR, split, "safe")
+    split_dir = os.path.join(cfg.DATA_DIR, split)
 
-    # Create datasets for each class
+    # class folders
+    safe_dir = os.path.join(split_dir, "safe")
+    not_safe_dir = os.path.join(split_dir, "not_safe")
+    kiss_dir = os.path.join(split_dir, "kiss")
+
+    # transforms
     transform = get_train_transforms() if split == 'train' else get_test_transforms()
-    not_safe_dataset = ImageClassDataset(not_safe_path, label=1, transform=transform)
-    safe_dataset = ImageClassDataset(safe_path, label=0, transform=transform)
+
+    # datasets
+    safe_ds = ImageClassDataset(safe_dir, label=0, transform=transform, return_path=(split != 'train'))
+    not_safe_ds = ImageClassDataset(not_safe_dir, label=1, transform=transform, return_path=(split != 'train'))
+    kiss_ds = ImageClassDataset(kiss_dir, label=2, transform=transform, return_path=(split != 'train'))
+
+    full_dataset = ConcatDataset([safe_ds, not_safe_ds, kiss_ds])
+    lengths = [len(safe_ds), len(not_safe_ds), len(kiss_ds)]
 
     if split == 'train':
-        # Determine majority and minority classes
-        if len(not_safe_dataset) >= len(safe_dataset):
-            majority_ds, minority_ds = not_safe_dataset, safe_dataset
-        else:
-            majority_ds, minority_ds = safe_dataset, not_safe_dataset
+        # labels list aligned with ConcatDataset ordering
+        labels = [0] * lengths[0] + [1] * lengths[1] + [2] * lengths[2]
 
-        # The sampler needs indices relative to the concatenated dataset
-        majority_indices = list(range(len(majority_ds)))
-        minority_indices = list(range(len(majority_ds), len(majority_ds) + len(minority_ds)))
-
-        full_dataset = ConcatDataset([majority_ds, minority_ds])
-
-        batch_sampler = BalancedBatchSampler(majority_indices, minority_indices, config.TRAIN_BATCH_SIZE)
+        batch_sampler = AnchoredBalancedBatchSampler(
+            labels=labels,
+            batch_size=cfg.TRAIN_BATCH_SIZE,
+            num_classes=cfg.NUM_CLASSES,
+            anchor_class=cfg.ANCHOR_CLASS,
+            drop_last=cfg.DROP_LAST,
+            seed=cfg.SEED,
+            balanced_per_batch=cfg.BALANCED_PER_BATCH,
+        )
 
         dataloader = DataLoader(
             full_dataset,
@@ -152,12 +260,10 @@ def build_dataloader(split, config):
             num_workers=4,
             pin_memory=True
         )
-    else:  # 'test' split
-        # For validation, a standard shuffled dataloader is fine.
-        full_dataset = ConcatDataset([not_safe_dataset, safe_dataset])
+    else:
         dataloader = DataLoader(
             full_dataset,
-            batch_size=config.TEST_BATCH_SIZE,
+            batch_size=cfg.TEST_BATCH_SIZE,
             shuffle=True,
             num_workers=4,
             pin_memory=True

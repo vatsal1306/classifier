@@ -8,6 +8,8 @@ import pandas as pd
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix
 
+import src.config as config
+
 logger = logging.getLogger(__name__)
 
 
@@ -15,7 +17,8 @@ def plot_confusion_matrix(y_true, y_pred, class_names, output_path):
     """
     Generates and saves a confusion matrix heatmap.
     """
-    cm = confusion_matrix(y_true, y_pred)
+    labels = list(range(len(class_names)))
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=class_names, yticklabels=class_names)
@@ -45,10 +48,11 @@ def main(pkl_path, output_dir):
 
     y_true = df['true_label']
     y_pred = df['predicted_label']
-    class_names = ['Non-Human', 'Human']  # Assuming 0 is Non-Human, 1 is Human
+    class_names = getattr(config, "CLASS_NAMES", ["safe", "not_safe", "kiss"])
 
     # --- Generate and Save Classification Report ---
-    report = classification_report(y_true, y_pred, target_names=class_names, digits=4)
+    report = classification_report(y_true, y_pred, target_names=class_names, digits=4,
+                                   labels=list(range(len(class_names))))
     report_path = os.path.join(output_dir, "classification_report.txt")
 
     logger.info("\n--- Classification Report ---")

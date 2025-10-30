@@ -7,10 +7,12 @@ import cv2
 import pandas as pd
 from tqdm import tqdm
 
+import src.config as config
+
 logger = logging.getLogger(__name__)
 
 
-def save_annotated_mistake(image_path, output_dir, true_label, pred_label, confidence):
+def save_annotated_mistake(image_path, output_dir, true_id, pred_id, probs):
     """
     Reads an image, creates a new canvas, pastes the image on the left,
     adds prediction info on the right, and saves the result.
@@ -22,41 +24,34 @@ def save_annotated_mistake(image_path, output_dir, true_label, pred_label, confi
 
     h, w, _ = image_bgr.shape
 
-    # --- Create a new, larger canvas ---
-    # We'll add a 200-pixel wide panel on the right for text to ensure it fits
-    text_panel_width = 200
-    canvas_h = h
-    canvas_w = w + text_panel_width
+    text_panel_width = 240
     canvas = cv2.copyMakeBorder(image_bgr, 0, 0, 0, text_panel_width, cv2.BORDER_CONSTANT, value=[255, 255, 255])
 
-    # --- Prepare text and filename components ---
-    true_lbl_str = "Human" if true_label == 1 else "NonHuman"
-    pred_lbl_str = "Human" if pred_label == 1 else "NonHuman"
-    original_basename = os.path.basename(image_path)
-
-    # --- Add text overlay on the new white panel ---
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.65
-    font_color = (0, 0, 0)  # Black text for the white background
+    color = (0, 0, 0)
     thickness = 2
 
-    text1 = f"GT: {true_lbl_str}"
-    text2 = f"Pred: {pred_lbl_str}"
-    text3 = f"Conf: {confidence:.4f}"
+    true_lbl_str = config.CLASS_NAMES[true_id] if 0 <= true_id < len(config.CLASS_NAMES) else str(true_id)
+    pred_lbl_str = config.CLASS_NAMES[pred_id] if 0 <= pred_id < len(config.CLASS_NAMES) else str(pred_id)
 
-    # Text placement coordinates (on the right panel)
-    text_x = w + 10
-    cv2.putText(canvas, text1, (text_x, 30), font, font_scale, font_color, thickness)
-    cv2.putText(canvas, text2, (text_x, 60), font, font_scale, font_color, thickness)
-    cv2.putText(canvas, text3, (text_x, 90), font, font_scale, font_color, thickness)
+    y = 30
+    cv2.putText(canvas, f"GT: {true_lbl_str}", (w + 10, y), font, font_scale, color, thickness)
+    y += 30
+    cv2.putText(canvas, f"Pred: {pred_lbl_str}", (w + 10, y), font, font_scale, color, thickness)
+    y += 30
+    for i, p in enumerate(probs):
+        cv2.putText(canvas, f"P[{config.CLASS_NAMES[i]}]: {p:.3f}", (w + 10, y), font, 0.55, color, 1)
+        y += 22
 
-    output_path = os.path.join(output_dir, original_basename)
+    output_path = os.path.join(output_dir, os.path.basename(image_path))
     cv2.imwrite(output_path, canvas)
 
 
-def main(pkl_path, output_dir, top_n, mistake_type):
+def main(pkl_path, output_dir, top_n):
     """
-    Loads predictions, finds the top N mistakes, and saves them as individual annotated images.
+    Loads predictions, finds the top N mistakes (highest wrong-class confidence),
+    and saves them as individual annotated images.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -65,42 +60,30 @@ def main(pkl_path, output_dir, top_n, mistake_type):
         results_list = pickle.load(f)
     df = pd.DataFrame(results_list)
 
-    # Calculate confidence for all predictions
-    df['confidence'] = df.apply(
-        lambda row: row['probability_human'] if row['predicted_label'] == 1 else 1 - row['probability_human'],
-        axis=1
-    )
-
-    # Filter for mistakes
-    mistakes_df = df[df['true_label'] != df['predicted_label']].copy()
-
-    # Apply optional filtering for specific mistake types
-    if mistake_type == 'human_as_nonhuman':
-        logger.info("Filtering for 'Human' misclassified as 'Non-Human'")
-        mistakes_df = mistakes_df[mistakes_df['true_label'] == 1]
-    elif mistake_type == 'nonhuman_as_human':
-        logger.info("Filtering for 'Non-Human' misclassified as 'Human'")
-        mistakes_df = mistakes_df[mistakes_df['true_label'] == 0]
-    else:
-        logger.info("Analyzing all mistake types")
-
-    # Sort by the most confident mistakes and select the top N
-    mistakes_df = mistakes_df.sort_values(by='confidence', ascending=False).head(top_n)
-
-    if mistakes_df.empty:
-        logger.info("No mistakes found for the specified criteria.")
+    if df.empty:
+        logger.info("No predictions to visualize.")
         return
 
-    logger.info(f"Saving the top {len(mistakes_df)} worst predictions individually to '{output_dir}'...")
+    # confidence of predicted class
+    df['pred_conf'] = df.apply(lambda r: r['probs'][r['predicted_label']], axis=1)
 
-    # Loop through the top N mistakes and save each one
+    # mistakes only
+    mistakes_df = df[df['true_label'] != df['predicted_label']].copy()
+    if mistakes_df.empty:
+        logger.info("No mistakes found.")
+        return
+
+    # sort by predicted confidence descending and take top N
+    mistakes_df = mistakes_df.sort_values(by='pred_conf', ascending=False).head(top_n)
+
+    logger.info(f"Saving {len(mistakes_df)} worst predictions to '{output_dir}'...")
     for _, row in tqdm(mistakes_df.iterrows(), total=len(mistakes_df), desc="Saving Mistake Images"):
         save_annotated_mistake(
             image_path=row['image_path'],
             output_dir=output_dir,
-            true_label=row['true_label'],
-            pred_label=row['predicted_label'],
-            confidence=row['confidence']
+            true_id=int(row['true_label']),
+            pred_id=int(row['predicted_label']),
+            probs=row['probs']
         )
 
     logger.info(f"Successfully saved {len(mistakes_df)} images.")
@@ -108,17 +91,14 @@ def main(pkl_path, output_dir, top_n, mistake_type):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Analyze model predictions and save the worst mistakes as individual images.")
+        description="Analyze 3-class model predictions and save the worst mistakes as individual images.")
     parser.add_argument("--pkl_path", type=str, required=True,
                         help="Path to the predictions.pkl file generated by predict.py.")
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to save the output images.")
     parser.add_argument("--top_n", type=int, default=50,
                         help="Total number of the worst prediction images to save.")
-    parser.add_argument("--mistake_type", type=str, default="all",
-                        choices=['all', 'human_as_nonhuman', 'nonhuman_as_human'],
-                        help="Filter which type of mistakes to save.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    main(args.pkl_path, args.output_dir, args.top_n, args.mistake_type)
+    main(args.pkl_path, args.output_dir, args.top_n)
