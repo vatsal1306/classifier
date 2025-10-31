@@ -4,6 +4,10 @@ import json
 import logging
 import os
 import shutil
+import sys
+
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, root)
 
 import albumentations as A
 import cv2
