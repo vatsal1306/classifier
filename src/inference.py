@@ -33,7 +33,7 @@ def get_test_transforms():
     ])
 
 
-def save_annotated_prediction(image_path, output_dir, pred_name, probs, small_size=IMAGE_SIZE):
+def save_annotated_prediction(image_path, output_dir, pred_name, probs):
     """
     Reads an image, resizes it to `small_size` (e.g., 224x224),
     adds a right-side text panel with prediction info, and saves it.
@@ -44,7 +44,7 @@ def save_annotated_prediction(image_path, output_dir, pred_name, probs, small_si
         return
 
     # --- Resize to match the model's test transform size ---
-    image_bgr = cv2.resize(image_bgr, (small_size, small_size), interpolation=cv2.INTER_LANCZOS4)
+    image_bgr = cv2.resize(image_bgr, (512, 512), interpolation=cv2.INTER_LANCZOS4)
 
     h, w, _ = image_bgr.shape
 
