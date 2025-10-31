@@ -2,6 +2,10 @@ import argparse
 import logging
 import os
 import pickle
+import sys
+
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, root)
 
 import cv2
 import pandas as pd
