@@ -33,33 +33,43 @@ def get_test_transforms():
     ])
 
 
-def save_annotated_prediction(image_path, output_dir, pred_name, probs):
+def save_annotated_prediction(image_path, output_dir, pred_name, probs, small_size=IMAGE_SIZE):
     """
-    Reads an image, creates a new canvas with prediction info, and saves it.
+    Reads an image, resizes it to `small_size` (e.g., 224x224),
+    adds a right-side text panel with prediction info, and saves it.
     """
     image_bgr = cv2.imread(image_path)
     if image_bgr is None:
         logger.warning(f"Could not read image {image_path}, skipping.")
         return
 
-    h, w, _ = image_bgr.shape
-    text_panel_width = 260
-    canvas = cv2.copyMakeBorder(image_bgr, 0, 0, 0, text_panel_width, cv2.BORDER_CONSTANT, value=[255, 255, 255])
+    # --- Resize to match the model's test transform size ---
+    image_bgr = cv2.resize(image_bgr, (small_size, small_size), interpolation=cv2.INTER_LANCZOS4)
 
+    h, w, _ = image_bgr.shape
+
+    # Keep a slim text panel since the image is now small
+    text_panel_width = 220
+    canvas = cv2.copyMakeBorder(
+        image_bgr, 0, 0, 0, text_panel_width,
+        cv2.BORDER_CONSTANT, value=[255, 255, 255]
+    )
+
+    # --- Text overlay ---
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
+    font_scale = 0.55
     color = (0, 0, 0)
     thickness = 1
 
-    cv2.putText(canvas, f"Pred: {pred_name}", (w + 10, 30), font, font_scale, color, thickness)
-    y = 60
+    cv2.putText(canvas, f"Pred: {pred_name}", (w + 10, 26), font, font_scale, color, thickness)
+    y = 52
     for i, p in enumerate(probs):
         cv2.putText(canvas, f"P[{config.CLASS_NAMES[i]}]: {p:.3f}", (w + 10, y), font, font_scale, color, thickness)
-        y += 24
+        y += 22
 
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, os.path.basename(image_path))
-    cv2.imwrite(output_path, canvas)
+    out_path = os.path.join(output_dir, os.path.basename(image_path))
+    cv2.imwrite(out_path, canvas)
 
 
 class Predictor:
