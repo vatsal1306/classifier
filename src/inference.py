@@ -1,9 +1,7 @@
 import argparse
 import glob
-import json
 import logging
 import os
-import shutil
 import sys
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -105,12 +103,7 @@ def main(args):
         logger.error(f"Input path does not exist: {args.input}")
         return
 
-    dest_img_dir = os.path.join(args.output, 'img')
-    dest_json_pth = os.path.join(args.output, 'data.json')
-    os.makedirs(dest_img_dir, exist_ok=True)
     device = args.device
-
-    results_dict = {}
 
     # --- Get list of image paths ---
     if os.path.isdir(args.input):
@@ -137,27 +130,7 @@ def main(args):
         pred_id, pred_name, probs = predictor.predict_image(img_path)
 
         # Optionally save annotated preview images
-        # save_annotated_prediction(img_path, args.output, pred_name, probs)
-
-        # Prepare JSON entry
-        results_dict[os.path.basename(img_path)] = {
-            "label": pred_id,
-            "label_name": pred_name,
-            "reviewed": False
-        }
-        shutil.copy(img_path, os.path.join(dest_img_dir, os.path.basename(img_path)))
-
-    # Merge with existing JSON (if any)
-    if os.path.exists(dest_json_pth):
-        with open(dest_json_pth, "r") as f:
-            existing = json.load(f)
-    else:
-        existing = {}
-
-    existing.update(results_dict)
-
-    with open(dest_json_pth, "w") as f:
-        json.dump(existing, f, indent=4)
+        save_annotated_prediction(img_path, args.output, pred_name, probs)
 
     logger.info(f"Inference complete. Results saved to: {args.output}")
 
