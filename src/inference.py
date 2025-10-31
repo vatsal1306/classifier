@@ -206,7 +206,7 @@ def main(args):
     # --- Run Inference Loop ---
     for img_path in tqdm(image_paths, desc="Running Inference"):
         pred_label, confidence = predictor.predict_image(img_path)
-        if pred_label is not None and pred_label == 1:
+        if pred_label is not None and pred_label == 0:
             save_annotated_prediction(img_path, args.output, pred_label, confidence)
     #     results_dict[os.path.basename(img_path)] = {"label": pred_label, "reviewed": False}
     #     shutil.copy(img_path, os.path.join(dest_img_dir, os.path.basename(img_path)))
