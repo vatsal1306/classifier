@@ -164,7 +164,7 @@ class Predictor:
             output = self.model(image_tensor)
             prob = torch.sigmoid(output).item()
 
-        pred_label = 1 if prob > 0.11 else 0
+        pred_label = 1 if prob > 0.5 else 0
         confidence = prob if pred_label == 1 else 1 - prob
 
         return pred_label, confidence
