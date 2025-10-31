@@ -176,6 +176,7 @@ def main(args):
         logger.error(f"Input path does not exist: {args.input}")
         return
 
+    os.makedirs(args.ouput, exist_ok=True)
     # dest_img_dir = os.path.join(args.output, 'img')
     # dest_json_pth = os.path.join(args.output, 'data.json')
     # os.makedirs(dest_img_dir, exist_ok=True)
