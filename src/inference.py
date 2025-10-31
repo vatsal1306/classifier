@@ -57,12 +57,13 @@ def save_annotated_prediction(image_path, output_dir, pred_name, probs):
         cv2.putText(canvas, f"P[{config.CLASS_NAMES[i]}]: {p:.3f}", (w + 10, y), font, font_scale, color, thickness)
         y += 24
 
+    os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, os.path.basename(image_path))
     cv2.imwrite(output_path, canvas)
 
 
 class Predictor:
-    """A helper class to encapsulate the model and prediction logic."""
+    """Encapsulates the model and prediction logic."""
 
     def __init__(self, model_name, checkpoint_path, device="cuda"):
         self.device = device
@@ -75,19 +76,21 @@ class Predictor:
         self.model.eval()
         logger.info("Model loaded successfully.")
 
+    def _prep_tensor(self, image_bgr):
+        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        transformed = self.transform(image=image_rgb)
+        return transformed['image']
+
     def predict_image(self, image_path):
         """
-        Runs inference on a single image.
-        Returns (pred_id, pred_name, probs[list]).
+        Single-image inference: returns (pred_id, pred_name, probs[list]) or (None, None, None) on failure.
         """
         image_bgr = cv2.imread(image_path)
         if image_bgr is None:
+            logger.warning(f"Could not read image {image_path}, skipping.")
             return None, None, None
 
-        image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        transformed = self.transform(image=image_rgb)
-        image_tensor = transformed['image'].unsqueeze(0).to(self.device)
-
+        image_tensor = self._prep_tensor(image_bgr).unsqueeze(0).to(self.device)
         with torch.no_grad():
             logits = self.model(image_tensor)  # [1, 3]
             probs = F.softmax(logits, dim=1).squeeze(0).cpu().tolist()
@@ -96,6 +99,53 @@ class Predictor:
         pred_name = config.CLASS_NAMES[pred_id]
         return pred_id, pred_name, probs
 
+    def predict_batch(self, image_paths):
+        """
+        Batched inference: returns a list of dicts:
+          { "path": str, "pred_id": int, "pred_name": str, "probs": list<float> }
+        Skips unreadable images with a warning.
+        """
+        tensors = []
+        keep_paths = []
+
+        for p in image_paths:
+            img = cv2.imread(p)
+            if img is None:
+                logger.warning(f"Could not read image {p}, skipping.")
+                continue
+            tensors.append(self._prep_tensor(img))
+            keep_paths.append(p)
+
+        if not tensors:
+            return []
+
+        batch = torch.stack(tensors, dim=0).to(self.device)  # [B, 3, 224, 224]
+        with torch.no_grad():
+            logits = self.model(batch)  # [B, 3]
+            probs_all = F.softmax(logits, dim=1).cpu().tolist()
+
+        results = []
+        for p, probs in zip(keep_paths, probs_all):
+            pred_id = int(max(range(len(probs)), key=lambda i: probs[i]))
+            results.append({
+                "path": p,
+                "pred_id": pred_id,
+                "pred_name": config.CLASS_NAMES[pred_id],
+                "probs": probs
+            })
+        return results
+
+
+def _resolve_device(arg_device: str) -> str:
+    req = (arg_device or "").strip().lower()
+    if req == "cpu":
+        return "cpu"
+    # treat anything else as CUDA intent
+    if torch.cuda.is_available():
+        return arg_device  # allow "cuda" or "cuda:0"
+    logger.warning("CUDA requested but not available; falling back to CPU.")
+    return "cpu"
+
 
 def main(args):
     """Main function to orchestrate the inference process."""
@@ -103,9 +153,12 @@ def main(args):
         logger.error(f"Input path does not exist: {args.input}")
         return
 
-    device = args.device
+    os.makedirs(args.output, exist_ok=True)
 
-    # --- Get list of image paths ---
+    # Resolve/validate device
+    device = _resolve_device(args.device)
+
+    # --- Collect image paths ---
     if os.path.isdir(args.input):
         image_paths = []
         image_paths.extend(glob.glob(os.path.join(args.input, '**', '*.[jJ][pP]*[gG]'), recursive=True))
@@ -125,12 +178,27 @@ def main(args):
     # --- Initialize Predictor ---
     predictor = Predictor(args.model_name, args.checkpoint, device)
 
-    # --- Run Inference Loop ---
-    for img_path in tqdm(image_paths, desc="Running Inference"):
-        pred_id, pred_name, probs = predictor.predict_image(img_path)
-
-        # Optionally save annotated preview images
-        save_annotated_prediction(img_path, args.output, pred_name, probs)
+    # --- Inference ---
+    bs = max(1, int(args.batch_size))
+    if device != "cpu" and bs > 1:
+        # Batched inference (GPU)
+        logger.info(f"Running batched inference on {device} with batch_size={bs}")
+        for i in tqdm(range(0, len(image_paths), bs), desc="Running Inference (batches)"):
+            chunk = image_paths[i:i + bs]
+            results = predictor.predict_batch(chunk)
+            for r in results:
+                save_annotated_prediction(r["path"], args.output, r["pred_name"], r["probs"])
+    else:
+        # CPU or batch_size==1 → per-image
+        if device == "cpu":
+            logger.info("Running single-image inference on CPU")
+        else:
+            logger.info("Running single-image inference (batch_size=1)")
+        for p in tqdm(image_paths, desc="Running Inference"):
+            pred_id, pred_name, probs = predictor.predict_image(p)
+            if pred_name is None:
+                continue
+            save_annotated_prediction(p, args.output, pred_name, probs)
 
     logger.info(f"Inference complete. Results saved to: {args.output}")
 
@@ -147,8 +215,11 @@ if __name__ == "__main__":
                         choices=['vit_b_16', 'vit_l_32', 'efficientnet_v2_l', 'efficientnet_v2_s', 'resnet18',
                                  'resnet34'],
                         help="Name of the model architecture to use.")
-    parser.add_argument("-d", "--device", type=str, default="cuda")
+    parser.add_argument("-d", "--device", type=str, default="cuda",
+                        help="Device: 'cpu', 'cuda', or 'cuda:N' (falls back to CPU if unavailable).")
     parser.add_argument("-l", "--limit", type=int, help="Limit how many images to process")
+    parser.add_argument("-b", "--batch_size", type=int, default=1,
+                        help="Batch size for inference. If >1 and using CUDA, runs in batches.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
