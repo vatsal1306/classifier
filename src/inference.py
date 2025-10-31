@@ -109,7 +109,7 @@ def save_annotated_prediction(image_path, output_dir, pred_label, confidence):
     canvas = cv2.copyMakeBorder(image_bgr, 0, 0, 0, text_panel_width, cv2.BORDER_CONSTANT, value=[255, 255, 255])
 
     # --- Prepare text ---
-    pred_lbl_str = "Human" if pred_label == 1 else "Non-Human"
+    pred_lbl_str = "Not Safe" if pred_label == 1 else "Safe"
     original_basename = os.path.basename(image_path)
 
     # --- Add text overlay on the white panel ---
@@ -205,30 +205,30 @@ def main(args):
     # --- Run Inference Loop ---
     for img_path in tqdm(image_paths, desc="Running Inference"):
         pred_label, confidence = predictor.predict_image(img_path)
-        # if pred_label is not None:
-            # save_annotated_prediction(img_path, args.output, pred_label, confidence)
-        results_dict[os.path.basename(img_path)] = {"label": pred_label, "reviewed": False}
-        shutil.copy(img_path, os.path.join(dest_img_dir, os.path.basename(img_path)))
-
-    # Load existing data if file exists
-    if os.path.exists(dest_json_pth):
-        with open(dest_json_pth, "r") as f:
-            existing = json.load(f)
-    else:
-        existing = {}
-
-    # Merge (existing keys will be updated)
-    existing.update(results_dict)
-
-    # Save back
-    with open(dest_json_pth, "w") as f:
-        json.dump(existing, f, indent=4)
+        if pred_label is not None:
+            save_annotated_prediction(img_path, args.output, pred_label, confidence)
+    #     results_dict[os.path.basename(img_path)] = {"label": pred_label, "reviewed": False}
+    #     shutil.copy(img_path, os.path.join(dest_img_dir, os.path.basename(img_path)))
+    #
+    # # Load existing data if file exists
+    # if os.path.exists(dest_json_pth):
+    #     with open(dest_json_pth, "r") as f:
+    #         existing = json.load(f)
+    # else:
+    #     existing = {}
+    #
+    # # Merge (existing keys will be updated)
+    # existing.update(results_dict)
+    #
+    # # Save back
+    # with open(dest_json_pth, "w") as f:
+    #     json.dump(existing, f, indent=4)
         
     logger.info(f"Inference complete. Results saved to: {args.output}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Standalone inference script for human/non-human classification.")
+    parser = argparse.ArgumentParser(description="Standalone inference script for Binary NSFW classification.")
     parser.add_argument("-i", "--input", type=str, required=True,
                         help="Path to a single image or a directory of images.")
     parser.add_argument("-o", "--output", type=str, required=True,
