@@ -18,7 +18,7 @@ OUTPUT_FEATURES = NUM_CLASSES  # IMPORTANT: 3 logits for multi-class
 # --- TRAINING ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 EPOCHS = 400
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-4
 OPTIMIZER = "SGD"  # ["AdamW", "SGD"]
 SCHEDULER = "CosineAnnealingWarmRestarts"  # ["CosineAnnealingLR", "CosineAnnealingWarmRestarts"]
 T_0 = 10
@@ -40,5 +40,5 @@ SEED = 50
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"
 DESCRIPTION = "efficientnet s multiclass run increase lr, reduce eta_min, increase wd"
-RUN_NAME = "eff_s_lr1e3_wd0.05"
+RUN_NAME = "eff_s_lr1e4_wd0.05"
 SAVE_CHECKPOINT_EPOCHS = 20
