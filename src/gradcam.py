@@ -101,11 +101,10 @@ class GradCAMConv:
             self.gradients = grad_out[0].detach()
 
         self._fh = target_layer.register_forward_hook(fwd_hook)
-        # Prefer full backward hook if available (PyTorch 1.8+)
         if hasattr(target_layer, "register_full_backward_hook"):
             self._bh = target_layer.register_full_backward_hook(bwd_hook)
         else:
-            self._bh = target_layer.register_backward_hook(bwd_hook)  # deprecated but fallback
+            self._bh = target_layer.register_backward_hook(bwd_hook)  # fallback for old PyTorch
 
     def close(self):
         try:
@@ -114,15 +113,26 @@ class GradCAMConv:
         except Exception:
             pass
 
-    def cam_for_batch(self, input_batch: torch.Tensor, class_ids: List[int]) -> List[np.ndarray]:
+    def _cam_from_current_grads_acts(self) -> Optional[np.ndarray]:
+        acts = self.activations  # [B,K,Hc,Wc]
+        grads = self.gradients  # [B,K,Hc,Wc]
+        if acts is None or grads is None:
+            return None
+        # We will read only index 0 since we do per-sample forward/backward when using this helper.
+        a = acts[0]  # [K,Hc,Wc]
+        g = grads[0]  # [K,Hc,Wc]
+        weights = g.mean(dim=(1, 2))  # [K]
+        cam = torch.relu((weights[:, None, None] * a).sum(dim=0))  # [Hc,Wc]
+        cam = cam - cam.min()
+        cam = cam / (cam.max() + 1e-8)
+        return cam.detach().cpu().numpy()
+
+    def cam_for_batch_pred_classes(self, input_batch: torch.Tensor, class_ids: List[int]) -> List[Optional[np.ndarray]]:
         """
-        input_batch: [B,3,H,W] (on same device as model)
-        class_ids: list of length B (target class per sample)
-        returns list of CAM maps (Hc,Wc) in [0,1]
+        Fast path: single backward pass summing target logits (one CAM per sample for its predicted class).
         """
         self.model.zero_grad(set_to_none=True)
         logits = self.model(input_batch)  # [B,C]
-        # sum target logit for each sample to backprop once
         loss = logits.new_zeros(())
         for i, cid in enumerate(class_ids):
             loss = loss + logits[i, cid]
@@ -133,7 +143,7 @@ class GradCAMConv:
         if acts is None or grads is None:
             return [None] * input_batch.shape[0]
 
-        cams: List[np.ndarray] = []
+        cams: List[Optional[np.ndarray]] = []
         B, K, Hc, Wc = acts.shape
         for i in range(B):
             a = acts[i]  # [K,Hc,Wc]
@@ -143,6 +153,24 @@ class GradCAMConv:
             cam = cam - cam.min()
             cam = cam / (cam.max() + 1e-8)
             cams.append(cam.detach().cpu().numpy())
+        return cams
+
+    def cams_all_classes_single(self, input_single: torch.Tensor, num_classes: int) -> List[Optional[np.ndarray]]:
+        """
+        Compute CAM for each class for a single input [1,3,H,W].
+        Returns list length = num_classes of CAM maps (Hc,Wc) in [0,1].
+        """
+        cams: List[Optional[np.ndarray]] = []
+        # single forward once
+        logits = self.model(input_single)  # [1,C]
+        for c in range(num_classes):
+            self.model.zero_grad(set_to_none=True)
+            # Backprop for this class logit
+            logits[0, c].backward(retain_graph=True)
+            cam = self._cam_from_current_grads_acts()
+            cams.append(cam)
+        # free graph
+        self.model.zero_grad(set_to_none=True)
         return cams
 
 
@@ -155,7 +183,6 @@ class ViTAttentionRollout:
 
     def __init__(self, vit: nn.Module):
         self.vit = vit
-        # infer patch grid
         try:
             patch = vit.patch_size if isinstance(vit.patch_size, int) else vit.patch_size[0]
             self.grid = IMAGE_SIZE // patch
@@ -165,7 +192,6 @@ class ViTAttentionRollout:
         self.attn_mats: List[torch.Tensor] = []
         self._hooks = []
         try:
-            # For each encoder layer, hook into attention dropout input (probs before drop)
             for blk in vit.encoder.layers:
                 attn_drop = getattr(blk.attn, "attn_drop", None)
                 if attn_drop is None:
@@ -173,7 +199,6 @@ class ViTAttentionRollout:
 
                 def make_hook():
                     def _hook(module, inputs, _output):
-                        # inputs is a tuple; inputs[0] are attention probs [B, heads, T, T]
                         if inputs and isinstance(inputs[0], torch.Tensor):
                             self.attn_mats.append(inputs[0].detach())
 
@@ -193,12 +218,8 @@ class ViTAttentionRollout:
 
     @torch.no_grad()
     def rollout(self, input_batch: torch.Tensor) -> List[Optional[np.ndarray]]:
-        """
-        Returns list of (grid x grid) heatmaps in [0,1]; None if rollout unavailable.
-        """
         self.attn_mats.clear()
-        _ = self.vit(input_batch)  # forward to collect attention maps
-
+        _ = self.vit(input_batch)
         if not self.attn_mats:
             return [None] * input_batch.shape[0]
 
@@ -209,13 +230,11 @@ class ViTAttentionRollout:
         for b in range(B):
             A_acc = None
             for A in self.attn_mats:
-                A_b = A[b].mean(dim=0)  # [T,T], avg over heads
+                A_b = A[b].mean(dim=0)  # [T,T]
                 A_b = A_b + torch.eye(T, device=A_b.device)  # residual
                 A_b = A_b / A_b.sum(dim=-1, keepdim=True)
                 A_acc = A_b if A_acc is None else A_acc @ A_b
-
-            # Importance from CLS (0) to patch tokens (1..)
-            mask = A_acc[0, 1:]
+            mask = A_acc[0, 1:]  # CLS→patches
             mask = mask / (mask.max() + 1e-8)
             mask = mask.reshape(self.grid, self.grid)
             outs.append(mask.detach().cpu().numpy())
@@ -230,7 +249,7 @@ def _overlay_cam_on_image(base_bgr_512: np.ndarray, cam_small: np.ndarray) -> np
     return cv2.addWeighted(heatmap, CAM_BLEND, base_bgr_512, 1.0 - CAM_BLEND, 0)
 
 
-def save_visualization_with_cam(image_path, output_dir, pred_name, probs, cam_small: Optional[np.ndarray]):
+def save_visualization_with_cam_single(image_path, output_dir, pred_name, probs, cam_small: Optional[np.ndarray]):
     """Save [original 512 | CAM overlay 512 | right panel]."""
     image_bgr = cv2.imread(image_path)
     if image_bgr is None:
@@ -245,18 +264,46 @@ def save_visualization_with_cam(image_path, output_dir, pred_name, probs, cam_sm
     cv2.imwrite(out_path, composite)
 
 
+def save_visualization_with_cam_multi(image_path, output_dir, pred_name, probs,
+                                      cams_per_class: List[Optional[np.ndarray]]):
+    """
+    Save [original 512 | CAM class0 | CAM class1 | ... | right panel].
+    cams_per_class: list length = num_classes (entries can be None)
+    """
+    image_bgr = cv2.imread(image_path)
+    if image_bgr is None:
+        logger.warning(f"Could not read image {image_path}, skipping.")
+        return
+    orig_512 = cv2.resize(image_bgr, (DISPLAY_SIZE, DISPLAY_SIZE), interpolation=cv2.INTER_LANCZOS4)
+
+    tiles = [orig_512]
+    for cam in cams_per_class:
+        if cam is not None:
+            tiles.append(_overlay_cam_on_image(orig_512, cam))
+        else:
+            tiles.append(orig_512.copy())
+
+    right_panel = _render_right_panel(pred_name, probs)
+    composite = np.hstack(tiles + [right_panel])
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, os.path.basename(image_path))
+    cv2.imwrite(out_path, composite)
+
+
 # -------------------- Predictor --------------------
 class Predictor:
     """Encapsulates model, transforms, optional CAM, and prediction logic."""
 
-    def __init__(self, model_name, checkpoint_path, device="cuda", enable_cam: bool = False):
+    def __init__(self, model_name, checkpoint_path, device="cuda", enable_cam: bool = False, cam_all: bool = False):
         self.device = device
         self.model_name = model_name
         self.transform = get_test_transforms()
         self.enable_cam = enable_cam
+        self.cam_all = cam_all
+        self.num_classes = int(getattr(config, "OUTPUT_FEATURES", 3))
 
         logger.info(f"Loading model '{model_name}' from {checkpoint_path}")
-        self.model = get_model(model_name, pretrained=False, num_classes=config.OUTPUT_FEATURES)
+        self.model = get_model(model_name, pretrained=False, num_classes=self.num_classes)
         self.model.load_state_dict(torch.load(checkpoint_path, map_location=device))
         self.model.to(self.device)
         self.model.eval()
@@ -294,36 +341,41 @@ class Predictor:
         transformed = self.transform(image=image_rgb)
         return transformed['image']  # CHW tensor
 
-    def _compute_cam_single(self, input_tensor: torch.Tensor, pred_id: int) -> Optional[np.ndarray]:
-        if not self.enable_cam:
-            return None
-        try:
-            if self.cnn_cam is not None:
-                cams = self.cnn_cam.cam_for_batch(input_tensor, [pred_id])
-                return cams[0] if cams else None
-            if self.vit_rollout is not None:
-                maps = self.vit_rollout.rollout(input_tensor)
-                return maps[0] if maps else None
-        except Exception as e:
-            logger.warning(f"CAM failed: {e}")
-        return None
-
-    def _compute_cam_batch(self, batch: torch.Tensor, pred_ids: List[int]) -> List[Optional[np.ndarray]]:
+    def _compute_cam_pred_only(self, batch: torch.Tensor, pred_ids: List[int]) -> List[Optional[np.ndarray]]:
         if not self.enable_cam:
             return [None] * batch.shape[0]
-        try:
-            if self.cnn_cam is not None:
-                return self.cnn_cam.cam_for_batch(batch, pred_ids)
-            if self.vit_rollout is not None:
-                return self.vit_rollout.rollout(batch)
-        except Exception as e:
-            logger.warning(f"Batch CAM failed: {e}")
+        if self.cnn_cam is not None:
+            return self.cnn_cam.cam_for_batch_pred_classes(batch, pred_ids)
+        if self.vit_rollout is not None:
+            # rollout is class-agnostic → same map for all
+            maps = self.vit_rollout.rollout(batch)
+            return maps
         return [None] * batch.shape[0]
+
+    def _compute_cam_all_classes_single(self, input_tensor_1: torch.Tensor) -> List[Optional[np.ndarray]]:
+        """
+        Return CAM for each class for a single item [1,3,H,W].
+        CNN: true class-specific Grad-CAM per class.
+        ViT: same rollout map replicated per class (class-agnostic).
+        """
+        if not self.enable_cam:
+            return [None] * self.num_classes
+        if self.cnn_cam is not None:
+            return self.cnn_cam.cams_all_classes_single(input_tensor_1, self.num_classes)
+        if self.vit_rollout is not None:
+            maps = self.vit_rollout.rollout(input_tensor_1)  # list of one map
+            m = maps[0] if maps else None
+            return [m for _ in range(self.num_classes)]
+        return [None] * self.num_classes
 
     def predict_image(self, image_path):
         """
         Single-image inference:
-          returns (pred_id, pred_name, probs, cam_small or None)
+          returns (pred_id, pred_name, probs, cams_out)
+          cams_out:
+            - if save_cam & cam_all: list of CAMs per class
+            - if save_cam only: a single CAM (np.ndarray) or None
+            - if no cam: None
         """
         image_bgr = cv2.imread(image_path)
         if image_bgr is None:
@@ -336,15 +388,24 @@ class Predictor:
             probs = F.softmax(logits, dim=1).squeeze(0).cpu().tolist()
 
         pred_id = int(np.argmax(probs))
-        cam_map = self._compute_cam_single(image_tensor, pred_id)
         pred_name = config.CLASS_NAMES[pred_id]
-        return pred_id, pred_name, probs, cam_map
+
+        if not self.enable_cam:
+            return pred_id, pred_name, probs, None
+
+        if self.cam_all:
+            cams_all = self._compute_cam_all_classes_single(image_tensor)
+            return pred_id, pred_name, probs, cams_all
+        else:
+            cams_pred = self._compute_cam_pred_only(image_tensor, [pred_id])[0]
+            return pred_id, pred_name, probs, cams_pred
 
     def predict_batch(self, image_paths):
         """
         Batched inference (preserves order, skips unreadable).
           returns list of dicts:
-            { "path": str, "pred_id": int, "pred_name": str, "probs": list[float], "cam_map": Optional[np.ndarray] }
+            if cam_all:  "cam_all": List[Optional[np.ndarray]]
+            else:        "cam_map": Optional[np.ndarray]
         """
         tensors, keep_paths = [], []
         for p in image_paths:
@@ -364,18 +425,43 @@ class Predictor:
             probs_all = F.softmax(logits, dim=1).cpu().tolist()
 
         pred_ids = [int(np.argmax(p)) for p in probs_all]
-        cam_maps = self._compute_cam_batch(batch, pred_ids)
 
         results = []
-        for p, probs, cam in zip(keep_paths, probs_all, cam_maps):
-            pred_id = int(np.argmax(probs))
-            results.append({
-                "path": p,
-                "pred_id": pred_id,
-                "pred_name": config.CLASS_NAMES[pred_id],
-                "probs": probs,
-                "cam_map": cam
-            })
+        if self.enable_cam and not self.cam_all:
+            # Efficient path: one CAM (pred class) per sample using one backward pass
+            cam_maps = self._compute_cam_pred_only(batch, pred_ids)
+            for pth, probs, cam in zip(keep_paths, probs_all, cam_maps):
+                pred_id = int(np.argmax(probs))
+                results.append({
+                    "path": pth,
+                    "pred_id": pred_id,
+                    "pred_name": config.CLASS_NAMES[pred_id],
+                    "probs": probs,
+                    "cam_map": cam
+                })
+        elif self.enable_cam and self.cam_all:
+            # Compute class-wise CAMs per image (do single-item CAM to keep logic simple/correct)
+            for i, pth in enumerate(keep_paths):
+                inp1 = batch[i:i + 1]
+                cams_all = self._compute_cam_all_classes_single(inp1)
+                pred_id = pred_ids[i]
+                results.append({
+                    "path": pth,
+                    "pred_id": pred_id,
+                    "pred_name": config.CLASS_NAMES[pred_id],
+                    "probs": probs_all[i],
+                    "cam_all": cams_all
+                })
+        else:
+            # No CAM
+            for pth, probs in zip(keep_paths, probs_all):
+                pred_id = int(np.argmax(probs))
+                results.append({
+                    "path": pth,
+                    "pred_id": pred_id,
+                    "pred_name": config.CLASS_NAMES[pred_id],
+                    "probs": probs
+                })
         return results
 
 
@@ -416,7 +502,8 @@ def main(args):
         image_paths = image_paths[:args.limit]
 
     # Initialize predictor (CAM optional)
-    predictor = Predictor(args.model_name, args.checkpoint, device, enable_cam=args.save_cam)
+    predictor = Predictor(args.model_name, args.checkpoint, device,
+                          enable_cam=args.save_cam, cam_all=args.cam_all)
 
     # Inference
     bs = max(1, int(args.batch_size))
@@ -426,8 +513,10 @@ def main(args):
             chunk = image_paths[i:i + bs]
             results = predictor.predict_batch(chunk)
             for r in results:
-                if args.save_cam and r["cam_map"] is not None:
-                    save_visualization_with_cam(r["path"], args.output, r["pred_name"], r["probs"], r["cam_map"])
+                if args.save_cam and args.cam_all and "cam_all" in r:
+                    save_visualization_with_cam_multi(r["path"], args.output, r["pred_name"], r["probs"], r["cam_all"])
+                elif args.save_cam and "cam_map" in r:
+                    save_visualization_with_cam_single(r["path"], args.output, r["pred_name"], r["probs"], r["cam_map"])
                 else:
                     save_annotated_prediction(r["path"], args.output, r["pred_name"], r["probs"])
     else:
@@ -436,11 +525,13 @@ def main(args):
         else:
             logger.info("Running single-image inference (batch_size=1)")
         for p in tqdm(image_paths, desc="Running Inference"):
-            pred_id, pred_name, probs, cam_map = predictor.predict_image(p)
+            pred_id, pred_name, probs, cams_out = predictor.predict_image(p)
             if pred_name is None:
                 continue
-            if args.save_cam and cam_map is not None:
-                save_visualization_with_cam(p, args.output, pred_name, probs, cam_map)
+            if args.save_cam and args.cam_all and isinstance(cams_out, list):
+                save_visualization_with_cam_multi(p, args.output, pred_name, probs, cams_out)
+            elif args.save_cam and isinstance(cams_out, np.ndarray):
+                save_visualization_with_cam_single(p, args.output, pred_name, probs, cams_out)
             else:
                 save_annotated_prediction(p, args.output, pred_name, probs)
 
@@ -466,7 +557,9 @@ if __name__ == "__main__":
     parser.add_argument("-b", "--batch_size", type=int, default=1,
                         help="Batch size for inference. If >1 and using CUDA, runs in batches.")
     parser.add_argument("--save_cam", action="store_true",
-                        help="If set, saves [original | CAM overlay | probs panel]. Otherwise saves [original | probs panel].")
+                        help="If set, saves CAM visualizations.")
+    parser.add_argument("--cam_all", action="store_true",
+                        help="If set with --save_cam, save CAM for ALL classes; else only for predicted class.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
