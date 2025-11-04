@@ -140,6 +140,9 @@ def main():
 
     criterion = nn.BCEWithLogitsLoss()
 
+    best_val_loss = float('inf')
+    best_model_path = os.path.join(checkpoints_dir, "model_best.pth")
+
     logging.info("Starting training...")
     tr_start = time()
     for epoch in range(1, config.EPOCHS + 1):
@@ -169,6 +172,13 @@ def main():
                 "val_accuracy": val_acc,
                 "lr": optimizer.param_groups[0]['lr']
             }, step=epoch)
+
+        # --- Save Best Checkpoint (based on val_loss) ---
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), best_model_path)
+            logging.info(f"New best model saved to {best_model_path} (Val Loss: {val_loss})")
+
 
         # --- Save Checkpoint ---
         if epoch % config.SAVE_CHECKPOINT_EPOCHS == 0:
