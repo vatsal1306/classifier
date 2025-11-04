@@ -23,13 +23,13 @@ from src.models import get_model
 
 logger = logging.getLogger(__name__)
 
-# ImageNet normalization statistics
+# ---- Constants ----
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 IMAGE_SIZE = 224
-DISPLAY_SIZE = 512
-PANEL_WIDTH = 260
-CAM_BLEND = 0.45
+DISPLAY_SIZE = 512  # panel size for original/CAM images
+PANEL_WIDTH = 260  # right text panel width
+CAM_BLEND = 0.45  # heatmap blend factor
 
 
 def get_test_transforms():
@@ -41,6 +41,19 @@ def get_test_transforms():
 
 
 # -------------------- Plain (no CAM) visualization --------------------
+def _render_right_panel(pred_name: str, probs: List[float]) -> np.ndarray:
+    canvas = np.full((DISPLAY_SIZE, PANEL_WIDTH, 3), 255, dtype=np.uint8)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale, color, thick = 0.55, (0, 0, 0), 1
+    y = 26
+    cv2.putText(canvas, f"Pred: {pred_name}", (10, y), font, scale, color, thick)
+    y += 26
+    for i, p in enumerate(probs):
+        cv2.putText(canvas, f"P[{config.CLASS_NAMES[i]}]: {p:.3f}", (10, y), font, scale, color, thick)
+        y += 22
+    return canvas
+
+
 def save_annotated_prediction(image_path, output_dir, pred_name, probs):
     """Save [original 512 | right text panel] (no CAM)."""
     image_bgr = cv2.imread(image_path)
@@ -48,19 +61,8 @@ def save_annotated_prediction(image_path, output_dir, pred_name, probs):
         logger.warning(f"Could not read image {image_path}, skipping.")
         return
     image_bgr = cv2.resize(image_bgr, (DISPLAY_SIZE, DISPLAY_SIZE), interpolation=cv2.INTER_LANCZOS4)
-    h, w, _ = image_bgr.shape
-
-    text_panel = np.full((h, PANEL_WIDTH, 3), 255, dtype=np.uint8)
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale, color, thick = 0.55, (0, 0, 0), 1
-    y = 26
-    cv2.putText(text_panel, f"Pred: {pred_name}", (10, y), font, scale, color, thick)
-    y += 26
-    for i, p in enumerate(probs):
-        cv2.putText(text_panel, f"P[{config.CLASS_NAMES[i]}]: {p:.3f}", (10, y), font, scale, color, thick)
-        y += 22
-
-    canvas = np.hstack([image_bgr, text_panel])
+    right_panel = _render_right_panel(pred_name, probs)
+    canvas = np.hstack([image_bgr, right_panel])
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir, os.path.basename(image_path))
     cv2.imwrite(out_path, canvas)
@@ -81,54 +83,63 @@ def _find_last_conv2d(model: nn.Module) -> Optional[nn.Module]:
 
 class GradCAMConv:
     """
-    Minimal Grad-CAM for CNNs.
-    - Hooks the last Conv2d layer to capture activations and gradients.
-    - CAM = ReLU( sum_k (avg_pool(grad_k)) * act_k ).
-    Returns heatmap in [0,1] at conv spatial size; caller can upsample.
+    Minimal Grad-CAM for CNNs (ResNet/EfficientNet-like).
+    Hooks the last Conv2d to capture activations and gradients.
     """
 
-    def __init__(self, model: nn.Module, target_layer: nn.Module, device: str):
+    def __init__(self, model: nn.Module, target_layer: nn.Module):
         self.model = model
         self.target_layer = target_layer
-        self.device = device
-
         self.activations = None
         self.gradients = None
 
-        def fwd_hook(m, inp, out):
+        def fwd_hook(_m, _in, out):
             self.activations = out.detach()
 
-        def bwd_hook(m, grad_in, grad_out):
+        def bwd_hook(_m, grad_in, grad_out):
+            # grad_out[0] is dL/d(out) for this layer
             self.gradients = grad_out[0].detach()
 
         self._fh = target_layer.register_forward_hook(fwd_hook)
-        self._bh = target_layer.register_full_backward_hook(bwd_hook)
+        # Prefer full backward hook if available (PyTorch 1.8+)
+        if hasattr(target_layer, "register_full_backward_hook"):
+            self._bh = target_layer.register_full_backward_hook(bwd_hook)
+        else:
+            self._bh = target_layer.register_backward_hook(bwd_hook)  # deprecated but fallback
+
+    def close(self):
+        try:
+            self._fh.remove()
+            self._bh.remove()
+        except Exception:
+            pass
 
     def cam_for_batch(self, input_batch: torch.Tensor, class_ids: List[int]) -> List[np.ndarray]:
         """
-        input_batch: [B,3,H,W] on device
-        class_ids: length B (target class per sample)
-        Returns list of CAM heatmaps (Hc,Wc) normalized to [0,1]
+        input_batch: [B,3,H,W] (on same device as model)
+        class_ids: list of length B (target class per sample)
+        returns list of CAM maps (Hc,Wc) in [0,1]
         """
         self.model.zero_grad(set_to_none=True)
         logits = self.model(input_batch)  # [B,C]
-        loss = 0.0
+        # sum target logit for each sample to backprop once
+        loss = logits.new_zeros(())
         for i, cid in enumerate(class_ids):
             loss = loss + logits[i, cid]
-        loss.backward(retain_graph=False)
+        loss.backward()
 
-        acts = self.activations  # [B, K, Hc, Wc]
-        grads = self.gradients  # [B, K, Hc, Wc]
-        cams = []
+        acts = self.activations  # [B,K,Hc,Wc]
+        grads = self.gradients  # [B,K,Hc,Wc]
+        if acts is None or grads is None:
+            return [None] * input_batch.shape[0]
 
+        cams: List[np.ndarray] = []
         B, K, Hc, Wc = acts.shape
         for i in range(B):
             a = acts[i]  # [K,Hc,Wc]
             g = grads[i]  # [K,Hc,Wc]
-            # global-average-pool grads over spatial dims
             weights = g.mean(dim=(1, 2))  # [K]
-            cam = (weights[:, None, None] * a).sum(dim=0)  # [Hc,Wc]
-            cam = torch.relu(cam)
+            cam = torch.relu((weights[:, None, None] * a).sum(dim=0))  # [Hc,Wc]
             cam = cam - cam.min()
             cam = cam / (cam.max() + 1e-8)
             cams.append(cam.detach().cpu().numpy())
@@ -137,82 +148,78 @@ class GradCAMConv:
 
 class ViTAttentionRollout:
     """
-    Basic Attention Rollout for torchvision ViT models.
-    - Multiplies attention matrices across layers to get a token-level importance.
-    - Drops CLS token and reshapes to (h,w).
-    Returns heatmap in [0,1] at token grid size (e.g., 14x14 for 224/16).
+    Attention Rollout for torchvision ViT models.
+    Multiplies attention (avg over heads) across encoder layers to produce a token-importance map.
+    Returns grid (h,w) heatmaps in [0,1].
     """
 
     def __init__(self, vit: nn.Module):
         self.vit = vit
-        # try to infer patch grid
-        patch = vit.patch_size if isinstance(vit.patch_size, int) else vit.patch_size[0]
-        self.grid = IMAGE_SIZE // patch  # e.g., 14
+        # infer patch grid
+        try:
+            patch = vit.patch_size if isinstance(vit.patch_size, int) else vit.patch_size[0]
+            self.grid = IMAGE_SIZE // patch
+        except Exception:
+            self.grid = 14
 
         self.attn_mats: List[torch.Tensor] = []
-
-        def enc_block_hook(mod, inp, out):
-            # hook on the multihead self-attention to get attention probs
-            # In torchvision ViT, block.attn.attn_drop comes after softmax
-            # safer: hook block.attn.attn_drop's input (which is already softmax)
-            pass  # we'll attach per-block below
-
-        # Attach a forward hook on each encoder block to collect attn
         self._hooks = []
         try:
+            # For each encoder layer, hook into attention dropout input (probs before drop)
             for blk in vit.encoder.layers:
-                # each block has blk.attn: MultiheadAttention-like wrapper
-                # we hook into blk.attn.attn_drop (its input is the attention probs)
+                attn_drop = getattr(blk.attn, "attn_drop", None)
+                if attn_drop is None:
+                    continue
+
                 def make_hook():
-                    def _hook(module, input, output):
-                        # input is a tuple; take the first arg (attention probs)
-                        attn = input[0]  # [B, heads, Tokens, Tokens]
-                        self.attn_mats.append(attn.detach())
+                    def _hook(module, inputs, _output):
+                        # inputs is a tuple; inputs[0] are attention probs [B, heads, T, T]
+                        if inputs and isinstance(inputs[0], torch.Tensor):
+                            self.attn_mats.append(inputs[0].detach())
 
                     return _hook
 
-                h = blk.attn.attn_drop.register_forward_hook(make_hook())
+                h = attn_drop.register_forward_hook(make_hook())
                 self._hooks.append(h)
         except Exception as e:
-            # If structure differs, we won't break; rollout simply won't run.
             logger.warning(f"Could not attach ViT attention hooks: {e}")
 
-    def __del__(self):
-        for h in getattr(self, "_hooks", []):
+    def close(self):
+        for h in self._hooks:
             try:
                 h.remove()
             except Exception:
                 pass
 
     @torch.no_grad()
-    def rollout(self, input_batch: torch.Tensor) -> List[np.ndarray]:
+    def rollout(self, input_batch: torch.Tensor) -> List[Optional[np.ndarray]]:
         """
-        Returns a list of rollout heatmaps (grid x grid) per sample, in [0,1].
+        Returns list of (grid x grid) heatmaps in [0,1]; None if rollout unavailable.
         """
         self.attn_mats.clear()
-        _ = self.vit(input_batch)  # forward pass to collect attention maps
+        _ = self.vit(input_batch)  # forward to collect attention maps
 
         if not self.attn_mats:
             return [None] * input_batch.shape[0]
 
-        # Multiply attention across layers (using average over heads per layer)
-        # attn_mats: list of [B, heads, T, T]
         B = self.attn_mats[0].shape[0]
         T = self.attn_mats[0].shape[-1]
-        rollouts = []
+        outs: List[Optional[np.ndarray]] = []
+
         for b in range(B):
-            attn_avg = None
+            A_acc = None
             for A in self.attn_mats:
-                A_b = A[b].mean(dim=0)  # [T,T]
+                A_b = A[b].mean(dim=0)  # [T,T], avg over heads
                 A_b = A_b + torch.eye(T, device=A_b.device)  # residual
                 A_b = A_b / A_b.sum(dim=-1, keepdim=True)
-                attn_avg = A_b if attn_avg is None else attn_avg @ A_b
-            # drop CLS token (index 0), keep patch tokens: T-1
-            mask = attn_avg[0, 1:]  # importance from CLS to patches, [T-1]
+                A_acc = A_b if A_acc is None else A_acc @ A_b
+
+            # Importance from CLS (0) to patch tokens (1..)
+            mask = A_acc[0, 1:]
             mask = mask / (mask.max() + 1e-8)
-            mask = mask.reshape(self.grid, self.grid)  # (h,w)
-            rollouts.append(mask.detach().cpu().numpy())
-        return rollouts
+            mask = mask.reshape(self.grid, self.grid)
+            outs.append(mask.detach().cpu().numpy())
+        return outs
 
 
 def _overlay_cam_on_image(base_bgr_512: np.ndarray, cam_small: np.ndarray) -> np.ndarray:
@@ -223,27 +230,14 @@ def _overlay_cam_on_image(base_bgr_512: np.ndarray, cam_small: np.ndarray) -> np
     return cv2.addWeighted(heatmap, CAM_BLEND, base_bgr_512, 1.0 - CAM_BLEND, 0)
 
 
-def _render_right_panel(pred_name: str, probs: List[float]) -> np.ndarray:
-    canvas = np.full((DISPLAY_SIZE, PANEL_WIDTH, 3), 255, dtype=np.uint8)
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    scale, color, thick = 0.55, (0, 0, 0), 1
-    y = 26
-    cv2.putText(canvas, f"Pred: {pred_name}", (10, y), font, scale, color, thick)
-    y += 26
-    for i, p in enumerate(probs):
-        cv2.putText(canvas, f"P[{config.CLASS_NAMES[i]}]: {p:.3f}", (10, y), font, scale, color, thick)
-        y += 22
-    return canvas
-
-
-def save_visualization_with_cam(image_path, output_dir, pred_name, probs, cam_map: Optional[np.ndarray]):
+def save_visualization_with_cam(image_path, output_dir, pred_name, probs, cam_small: Optional[np.ndarray]):
     """Save [original 512 | CAM overlay 512 | right panel]."""
     image_bgr = cv2.imread(image_path)
     if image_bgr is None:
         logger.warning(f"Could not read image {image_path}, skipping.")
         return
     orig_512 = cv2.resize(image_bgr, (DISPLAY_SIZE, DISPLAY_SIZE), interpolation=cv2.INTER_LANCZOS4)
-    cam_overlay = _overlay_cam_on_image(orig_512, cam_map) if cam_map is not None else orig_512.copy()
+    cam_overlay = _overlay_cam_on_image(orig_512, cam_small) if cam_small is not None else orig_512.copy()
     right_panel = _render_right_panel(pred_name, probs)
     composite = np.hstack([orig_512, cam_overlay, right_panel])
     os.makedirs(output_dir, exist_ok=True)
@@ -253,7 +247,7 @@ def save_visualization_with_cam(image_path, output_dir, pred_name, probs, cam_ma
 
 # -------------------- Predictor --------------------
 class Predictor:
-    """Encapsulates model, transforms, in-script CAM, and prediction logic."""
+    """Encapsulates model, transforms, optional CAM, and prediction logic."""
 
     def __init__(self, model_name, checkpoint_path, device="cuda", enable_cam: bool = False):
         self.device = device
@@ -268,27 +262,32 @@ class Predictor:
         self.model.eval()
         logger.info("Model loaded successfully.")
 
-        # In-script CAM objects (created only if requested)
+        # CAM helpers (only if requested)
         self.cnn_cam: Optional[GradCAMConv] = None
         self.vit_rollout: Optional[ViTAttentionRollout] = None
 
         if self.enable_cam:
             try:
                 if _is_vit(self.model_name):
-                    # For torchvision ViT we’ll do attention rollout (no gradients)
                     self.vit_rollout = ViTAttentionRollout(self.model)
                     logger.info("CAM: ViT Attention Rollout enabled.")
                 else:
                     last_conv = _find_last_conv2d(self.model)
                     if last_conv is None:
-                        logger.warning("No Conv2d layer found; CAM disabled.")
+                        logger.warning("No Conv2d layer found; disabling CAM.")
                         self.enable_cam = False
                     else:
-                        self.cnn_cam = GradCAMConv(self.model, last_conv, self.device)
+                        self.cnn_cam = GradCAMConv(self.model, last_conv)
                         logger.info(f"CAM: Grad-CAM on {last_conv.__class__.__name__} enabled.")
             except Exception as e:
                 logger.warning(f"CAM init failed ({e}). Continuing without CAM.")
                 self.enable_cam = False
+
+    def close(self):
+        if self.cnn_cam is not None:
+            self.cnn_cam.close()
+        if self.vit_rollout is not None:
+            self.vit_rollout.close()
 
     def _prep_tensor(self, image_bgr):
         image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -296,11 +295,6 @@ class Predictor:
         return transformed['image']  # CHW tensor
 
     def _compute_cam_single(self, input_tensor: torch.Tensor, pred_id: int) -> Optional[np.ndarray]:
-        """
-        Compute CAM map for a single item [1,3,224,224].
-        - CNN: Grad-CAM returns conv-size map; upsample later.
-        - ViT : Attention rollout (grid x grid).
-        """
         if not self.enable_cam:
             return None
         try:
@@ -391,7 +385,7 @@ def _resolve_device(arg_device: str) -> str:
     if req == "cpu":
         return "cpu"
     if torch.cuda.is_available():
-        return arg_device  # allow "cuda" or "cuda:0"
+        return arg_device  # allow "cuda" or "cuda:N"
     logger.warning("CUDA requested but not available; falling back to CPU.")
     return "cpu"
 
@@ -434,9 +428,6 @@ def main(args):
             for r in results:
                 if args.save_cam and r["cam_map"] is not None:
                     save_visualization_with_cam(r["path"], args.output, r["pred_name"], r["probs"], r["cam_map"])
-                elif args.save_cam:
-                    # CAM requested but unavailable for this image/model → fallback without CAM
-                    save_annotated_prediction(r["path"], args.output, r["pred_name"], r["probs"])
                 else:
                     save_annotated_prediction(r["path"], args.output, r["pred_name"], r["probs"])
     else:
@@ -450,11 +441,10 @@ def main(args):
                 continue
             if args.save_cam and cam_map is not None:
                 save_visualization_with_cam(p, args.output, pred_name, probs, cam_map)
-            elif args.save_cam:
-                save_annotated_prediction(p, args.output, pred_name, probs)
             else:
                 save_annotated_prediction(p, args.output, pred_name, probs)
 
+    predictor.close()
     logger.info(f"Inference complete. Results saved to: {args.output}")
 
 
