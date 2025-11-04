@@ -10,6 +10,8 @@ def _build_resnet(model_name, weights, num_classes):
         model = models.resnet18(weights=weights)
     elif model_name == "resnet34":
         model = models.resnet34(weights=weights)
+    elif model_name == "resnet50":
+        model = models.resnet50(weights=weights)
     else:
         raise ValueError(f"Unsupported ResNet variant: {model_name}")
 
@@ -51,6 +53,7 @@ def _build_efficientnet(model_name, weights, num_classes):
 WEIGHTS_MAPPING = {
     "resnet18": models.ResNet18_Weights.DEFAULT,
     "resnet34": models.ResNet34_Weights.DEFAULT,
+    "resnet50": models.ResNet50_Weights.IMAGENET1K_V2,
     "vit_b_16": models.ViT_B_16_Weights.DEFAULT,
     "vit_l_32": models.ViT_L_32_Weights.DEFAULT,
     "efficientnet_v2_l": models.EfficientNet_V2_L_Weights.DEFAULT,
@@ -60,6 +63,7 @@ WEIGHTS_MAPPING = {
 MODEL_REGISTRY = {
     "resnet18": _build_resnet,
     "resnet34": _build_resnet,
+    "resnet50": _build_resnet,
     "vit_b_16": _build_vit,
     "vit_l_32": _build_vit,
     "efficientnet_v2_l": _build_efficientnet,
