@@ -104,45 +104,35 @@ class GradCAMConv:
         self._fh = target_layer.register_forward_hook(fwd_hook)
         self._bh = target_layer.register_full_backward_hook(bwd_hook)
 
-    def __del.
+    def cam_for_batch(self, input_batch: torch.Tensor, class_ids: List[int]) -> List[np.ndarray]:
+        """
+        input_batch: [B,3,H,W] on device
+        class_ids: length B (target class per sample)
+        Returns list of CAM heatmaps (Hc,Wc) normalized to [0,1]
+        """
+        self.model.zero_grad(set_to_none=True)
+        logits = self.model(input_batch)  # [B,C]
+        loss = 0.0
+        for i, cid in enumerate(class_ids):
+            loss = loss + logits[i, cid]
+        loss.backward(retain_graph=False)
 
-        target_hooks(self):
-    try:
-        self._fh.remove()
-        self._bh.remove()
-    except Exception:
-        pass
+        acts = self.activations  # [B, K, Hc, Wc]
+        grads = self.gradients  # [B, K, Hc, Wc]
+        cams = []
 
-
-def cam_for_batch(self, input_batch: torch.Tensor, class_ids: List[int]) -> List[np.ndarray]:
-    """
-    input_batch: [B,3,H,W] on device
-    class_ids: length B (target class per sample)
-    Returns list of CAM heatmaps (Hc,Wc) normalized to [0,1]
-    """
-    self.model.zero_grad(set_to_none=True)
-    logits = self.model(input_batch)  # [B,C]
-    loss = 0.0
-    for i, cid in enumerate(class_ids):
-        loss = loss + logits[i, cid]
-    loss.backward(retain_graph=False)
-
-    acts = self.activations  # [B, K, Hc, Wc]
-    grads = self.gradients  # [B, K, Hc, Wc]
-    cams = []
-
-    B, K, Hc, Wc = acts.shape
-    for i in range(B):
-        a = acts[i]  # [K,Hc,Wc]
-        g = grads[i]  # [K,Hc,Wc]
-        # global-average-pool grads over spatial dims
-        weights = g.mean(dim=(1, 2))  # [K]
-        cam = (weights[:, None, None] * a).sum(dim=0)  # [Hc,Wc]
-        cam = torch.relu(cam)
-        cam = cam - cam.min()
-        cam = cam / (cam.max() + 1e-8)
-        cams.append(cam.detach().cpu().numpy())
-    return cams
+        B, K, Hc, Wc = acts.shape
+        for i in range(B):
+            a = acts[i]  # [K,Hc,Wc]
+            g = grads[i]  # [K,Hc,Wc]
+            # global-average-pool grads over spatial dims
+            weights = g.mean(dim=(1, 2))  # [K]
+            cam = (weights[:, None, None] * a).sum(dim=0)  # [Hc,Wc]
+            cam = torch.relu(cam)
+            cam = cam - cam.min()
+            cam = cam / (cam.max() + 1e-8)
+            cams.append(cam.detach().cpu().numpy())
+        return cams
 
 
 class ViTAttentionRollout:
