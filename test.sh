@@ -1,4 +1,4 @@
-RUN_NAME=eff_s_lr1e3_wd0.05
+RUN_NAME=eff_s_lr1e4_wd0.05
 CHKPT_NAME=model_400.pth
 
 # test script to save predictions as pickle file

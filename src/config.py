@@ -23,8 +23,8 @@ OPTIMIZER = "SGD"  # ["AdamW", "SGD"]
 SCHEDULER = "CosineAnnealingWarmRestarts"  # ["CosineAnnealingLR", "CosineAnnealingWarmRestarts"]
 T_0 = 10
 T_MULT = 2
-ETA_MIN = 1e-10
-WEIGHT_DECAY = 0.05
+ETA_MIN = 1e-12
+WEIGHT_DECAY = 1e-5
 
 # Loss (multi-class)
 LOSS_FUNCTION = "CrossEntropy"
@@ -35,10 +35,10 @@ LABEL_SMOOTHING = 0.1
 ANCHOR_CLASS = "auto"            # or set to an int 0/1/2
 DROP_LAST = False                 # drop last partial batch
 BALANCED_PER_BATCH = True        # aim for as-even-as-possible within each batch
-SEED = 50
+SEED = 51
 
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"
-DESCRIPTION = "efficientnet s multiclass run increase lr, reduce eta_min, increase wd"
-RUN_NAME = "eff_s_lr1e4_wd0.05"
+DESCRIPTION = "efficientnet s multiclass run reduce wd"
+RUN_NAME = "eff_s_lr1e4_wd1e5"
 SAVE_CHECKPOINT_EPOCHS = 20
