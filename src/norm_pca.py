@@ -134,7 +134,7 @@ def load_and_normalize(paths, transform, device, batch_size):
     """
     batch_imgs, batch_lbls, batch_pths = [], [], []
     name_to_idx = {n: i for i, n in enumerate(getattr(config, "CLASS_NAMES", []))}
-    for p in paths:
+    for p in tqdm(paths):
         img = cv2.imread(p)
         if img is None:
             logger.warning(f"Unreadable: {p}")
