@@ -1,9 +1,9 @@
 import torch
 
 # --- DATASET & DATALOADER ---
-DATA_DIR = "dataset/binary"  # Directory where the processed shards are stored
-TRAIN_BATCH_SIZE = 256  # Batch size for training (32 human, 32 non-human)
-TEST_BATCH_SIZE = 256  # Batch size for validation/testing
+DATA_DIR = "dataset/multiclass"  # Directory where the processed shards are stored
+TRAIN_BATCH_SIZE = 512  # Batch size for training (32 human, 32 non-human)
+TEST_BATCH_SIZE = 512  # Batch size for validation/testing
 
 # --- MODEL ---
 MODEL_NAME = "resnet50"  # Model architecture to use (e.g., "resnet18", "resnet34")
@@ -24,6 +24,6 @@ LOSS_FUNCTION = "BCEWithLogitsLoss"  # Loss function for training
 
 # --- CHECKPOINTS & LOGGING ---
 RUNS_DIR = "runs"  # Main directory to store all training runs
-DESCRIPTION = "ResNet50 on binary dataset"  # Description for the current run
-RUN_NAME = "resnet50_bin"  # Name for the current run (used in the run directory)
+DESCRIPTION = "ResNet50 on multiclass dataset for binary classification. omits kiss images"  # Description for the current run
+RUN_NAME = "resnet50_bin_on_multi"  # Name for the current run (used in the run directory)
 SAVE_CHECKPOINT_EPOCHS = 20  # Save a model checkpoint every N epochs
