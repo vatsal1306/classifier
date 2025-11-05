@@ -56,3 +56,5 @@ python src/viz_predictions.py \
 --output_dir runs/${RUN_NAME}/infer_best/safe_as_not_safe/ \
 --top_n 100 \
 --mistake_type safe_as_not_safe
+
+
