@@ -45,7 +45,7 @@ def main(pkl_path, output_dir):
 
     y_true = df['true_label']
     y_pred = df['predicted_label']
-    class_names = ['Non-Human', 'Human']  # Assuming 0 is Non-Human, 1 is Human
+    class_names = ['safe', 'not_safe']  # Assuming 0 is Non-Human, 1 is Human
 
     # --- Generate and Save Classification Report ---
     report = classification_report(y_true, y_pred, target_names=class_names, digits=4)

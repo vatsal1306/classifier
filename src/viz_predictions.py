@@ -30,8 +30,8 @@ def save_annotated_mistake(image_path, output_dir, true_label, pred_label, confi
     canvas = cv2.copyMakeBorder(image_bgr, 0, 0, 0, text_panel_width, cv2.BORDER_CONSTANT, value=[255, 255, 255])
 
     # --- Prepare text and filename components ---
-    true_lbl_str = "Human" if true_label == 1 else "NonHuman"
-    pred_lbl_str = "Human" if pred_label == 1 else "NonHuman"
+    true_lbl_str = "not_safe" if true_label == 1 else "safe"
+    pred_lbl_str = "not_safe" if pred_label == 1 else "safe"
     original_basename = os.path.basename(image_path)
 
     # --- Add text overlay on the new white panel ---
@@ -67,7 +67,7 @@ def main(pkl_path, output_dir, top_n, mistake_type):
 
     # Calculate confidence for all predictions
     df['confidence'] = df.apply(
-        lambda row: row['probability_human'] if row['predicted_label'] == 1 else 1 - row['probability_human'],
+        lambda row: row['probability_not_safe'] if row['predicted_label'] == 1 else 1 - row['probability_not_safe'],
         axis=1
     )
 
@@ -75,11 +75,11 @@ def main(pkl_path, output_dir, top_n, mistake_type):
     mistakes_df = df[df['true_label'] != df['predicted_label']].copy()
 
     # Apply optional filtering for specific mistake types
-    if mistake_type == 'human_as_nonhuman':
-        logger.info("Filtering for 'Human' misclassified as 'Non-Human'")
+    if mistake_type == 'not_safe_as_safe':
+        logger.info("Filtering for 'not_safe' misclassified as 'safe'")
         mistakes_df = mistakes_df[mistakes_df['true_label'] == 1]
-    elif mistake_type == 'nonhuman_as_human':
-        logger.info("Filtering for 'Non-Human' misclassified as 'Human'")
+    elif mistake_type == 'safe_as_not_safe':
+        logger.info("Filtering for 'safe' misclassified as 'not_safe'")
         mistakes_df = mistakes_df[mistakes_df['true_label'] == 0]
     else:
         logger.info("Analyzing all mistake types")
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     parser.add_argument("--top_n", type=int, default=50,
                         help="Total number of the worst prediction images to save.")
     parser.add_argument("--mistake_type", type=str, default="all",
-                        choices=['all', 'human_as_nonhuman', 'nonhuman_as_human'],
+                        choices=['all', 'not_safe_as_safe', 'safe_as_not_safe'],
                         help="Filter which type of mistakes to save.")
     args = parser.parse_args()
 

@@ -47,17 +47,17 @@ def run_predictions(checkpoint_path, config):
         return images, labels, paths
 
     # Build the dataset with return_path=True
-    human_dataset = ImageClassDataset(os.path.join(config.DATA_DIR, "test", "human"), label=1,
-                                      transform=get_test_transforms(), return_path=True)
-    non_human_dataset = ImageClassDataset(os.path.join(config.DATA_DIR, "test", "non_human"), label=0,
-                                          transform=get_test_transforms(), return_path=True)
-    full_dataset = ConcatDataset([human_dataset, non_human_dataset])
+    not_safe_dataset = ImageClassDataset(os.path.join(config.DATA_DIR, "test", "not_safe"), label=1,
+                                         transform=get_test_transforms(), return_path=True)
+    safe_dataset = ImageClassDataset(os.path.join(config.DATA_DIR, "test", "safe"), label=0,
+                                     transform=get_test_transforms(), return_path=True)
+    full_dataset = ConcatDataset([not_safe_dataset, safe_dataset])
 
     dataloader = DataLoader(
         full_dataset,
         batch_size=config.TEST_BATCH_SIZE,
         shuffle=False,
-        num_workers=4,
+        num_workers=16,
         pin_memory=True,
         collate_fn=collate_fn_predict
     )
@@ -77,7 +77,7 @@ def run_predictions(checkpoint_path, config):
                     "image_path": paths[i],
                     "true_label": labels[i].item(),
                     "predicted_label": preds[i].item(),
-                    "probability_human": probs[i].item()
+                    "probability_not_safe": probs[i].item()
                 })
 
     # --- Save to Pickle File ---
