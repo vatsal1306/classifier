@@ -243,15 +243,15 @@ def reduce_2d(X, method="umap"):
         try:
             reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, metric="cosine", random_state=42)
             return reducer.fit_transform(X)
-        except Exception:
-            logger.error("UMAP reduction failed, falling back to PCA.")
+        except Exception as e:
+            logger.error(f"UMAP reduction failed - {e}, falling back to PCA.")
 
     if method == "tsne":
         try:
             return TSNE(n_components=2, init="pca", learning_rate="auto", perplexity=30, random_state=42).fit_transform(
                 X)
-        except Exception:
-            logger.error("t-SNE reduction failed, falling back to PCA.")
+        except Exception as e:
+            logger.error(f"t-SNE reduction failed - {e}, falling back to PCA.")
 
     # PCA fallback (always available via sklearn)
     return PCA(n_components=2, random_state=42).fit_transform(X)
