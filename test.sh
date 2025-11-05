@@ -61,34 +61,61 @@ python src/viz_predictions.py \
 
 # Test on inference data
 python src/inference.py \
--i dataset/infer_data/ \
+-i dataset/infer_data_resized/ \
 -o runs/${RUN_NAME}/infer_last/infer_data/ \
 -c runs/${RUN_NAME}/checkpoints/${CHKPT_NAME} \
--m efficientnet_v2_s \
--b 64 \
--w 8
+-m resnet50 \
+-b 8 \
+-w 16
 
 # for best model
 python src/inference.py \
--i dataset/infer_data/ \
+-i dataset/infer_data_resized/ \
 -o runs/${RUN_NAME}/infer_best/infer_data/ \
 -c runs/${RUN_NAME}/checkpoints/${BEST_CHKPT_NAME} \
--m efficientnet_v2_s \
--b 64 \
--w 8
+-m resnet50 \
+-b 8 \
+-w 16
 
 
 
-## save grids
-#python save_grids.py \
-#-i runs/${RUN_NAME}/infer/incorrect_preds/ \
-#-o runs/${RUN_NAME}/infer/grids/incorrect_preds \
-#--img_size 752 512 \
-#--num_workers 32
-#
-#
-#python save_grids.py \
-#-i runs/${RUN_NAME}/infer/infer_data/ \
-#-o runs/${RUN_NAME}/infer/grids/infer_data \
-#--img_size 732 512 \
-#--num_workers 8
+# save grids
+python save_grids.py \
+-i runs/${RUN_NAME}/infer_last/not_safe_as_safe/ \
+-o runs/${RUN_NAME}/infer_last/grids/not_safe_as_safe \
+--img_size 712 512 \
+--num_workers 16
+
+python save_grids.py \
+-i runs/${RUN_NAME}/infer_last/safe_as_not_safe/ \
+-o runs/${RUN_NAME}/infer_last/grids/safe_as_not_safe \
+--img_size 712 512 \
+--num_workers 16
+
+
+python save_grids.py \
+-i runs/${RUN_NAME}/infer_last/infer_data/ \
+-o runs/${RUN_NAME}/infer_last/grids/infer_data \
+--img_size 732 512 \
+--num_workers 16
+
+
+# for best model
+python save_grids.py \
+-i runs/${RUN_NAME}/infer_best/not_safe_as_safe/ \
+-o runs/${RUN_NAME}/infer_best/grids/not_safe_as_safe \
+--img_size 712 512 \
+--num_workers 16
+
+python save_grids.py \
+-i runs/${RUN_NAME}/infer_best/safe_as_not_safe/ \
+-o runs/${RUN_NAME}/infer_best/grids/safe_as_not_safe \
+--img_size 712 512 \
+--num_workers 16
+
+
+python save_grids.py \
+-i runs/${RUN_NAME}/infer_best/infer_data/ \
+-o runs/${RUN_NAME}/infer_best/grids/infer_data \
+--img_size 732 512 \
+--num_workers 16
