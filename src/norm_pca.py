@@ -160,6 +160,7 @@ def viz_norm_stats(paths, device, batch_size, out_png):
     logger.info("Computing per-image normalized pixel stats...")
     tfm = get_test_transforms()
     means, stds, labels = [], [], []
+    proc_paths = []
 
     for bt, bl, bp in tqdm(load_and_normalize(paths, tfm, device, batch_size)):
         # bt is normalized already (Imagenet). Compute per-image per-channel stats in normalized space.
@@ -170,6 +171,7 @@ def viz_norm_stats(paths, device, batch_size, out_png):
         means.append(m)
         stds.append(s)
         labels += bl
+        proc_paths.extend(bp)
 
     if not means:
         logger.error("No images processed for stats.")
@@ -186,7 +188,7 @@ def viz_norm_stats(paths, device, batch_size, out_png):
     save_plotly_stats(
         mean_scalar=mean_scalar,
         std_scalar=std_scalar,
-        paths=paths,
+        paths=proc_paths,
         out_html=out_png.replace('.png', '.html') if out_png else "norm_stats.html",
         title="Per-image normalized pixel stats (interactive)"
     )
@@ -271,11 +273,12 @@ def viz_embeddings(paths, checkpoint, model_name, device, batch_size, method, ou
     tfm = get_test_transforms()
     extractor = get_feature_extractor(model)
 
-    feats_list, lbls_list = [], []
+    feats_list, lbls_list, proc_paths = [], [], []
     for bt, bl, bp in tqdm(load_and_normalize(paths, tfm, device, batch_size)):
         f = extractor(bt).detach().cpu().numpy()
         feats_list.append(f)
         lbls_list += bl
+        proc_paths.extend(bp)
 
     if not feats_list:
         logger.error("No features extracted.");
@@ -283,6 +286,7 @@ def viz_embeddings(paths, checkpoint, model_name, device, batch_size, method, ou
 
     X = np.concatenate(feats_list, axis=0)
     y = np.array(lbls_list)
+    assert len(proc_paths) == X.shape[0] == y.shape[0], "paths/features/labels length mismatch"
 
     # Filter unknown labels (-1) if present
     mask = y != -1
@@ -293,11 +297,12 @@ def viz_embeddings(paths, checkpoint, model_name, device, batch_size, method, ou
 
     Z = reduce_2d(X_plot, method=method)  # [N,2]
 
-    filtered_paths = [p for (p, keep) in zip(paths, (y != -1)) if keep] if (y == -1).any() else paths
+    # filtered_paths = [p for (p, keep) in zip(paths, (y != -1)) if keep] if (y == -1).any() else paths
+    paths_plot = [p for p, keep in zip(proc_paths, mask) if keep] if mask.any() else proc_paths
     save_plotly_embed(
         Z=Z,
         labels=y_plot,
-        paths=filtered_paths,
+        paths=paths_plot,
         class_names=class_names,
         out_html=out_png.replace('.png', '.html') if out_png else "embedding_map.html",
         title="Embedding map (interactive)"
