@@ -20,14 +20,14 @@ from src.utils.utils import import_vars_from_path
 logger = logging.getLogger(__name__)
 
 
-def run_predictions(checkpoint_path, config):
+def run_predictions(checkpoint_path, config, output_pkl_path):
     """
     Runs the model on the test set and saves all predictions to a pickle file.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # device = "cpu"
     run_dir = os.path.join(config.RUNS_DIR, config.RUN_NAME)
-    output_pkl_path = os.path.join(run_dir, "predictions.pkl")
+    output_pkl_path = os.path.join(run_dir, output_pkl_path)
 
     # --- Load Model ---
     logger.info(f"Loading model from {checkpoint_path}")
@@ -93,6 +93,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, required=True,
                         help="Path to the trained model checkpoint (.pth file).")
     parser.add_argument("--config", type=str, required=True, help="Path to the config.py file.")
+    parser.add_argument("--output", type=str, default="predictions.pkl",
+                        help="Directory to save the predictions.pkl file.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -101,4 +103,4 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"config.py not found at {args.config}")
 
     config = import_vars_from_path(args.config)
-    run_predictions(args.checkpoint, config)
+    run_predictions(args.checkpoint, config, args.output)
