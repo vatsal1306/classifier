@@ -259,9 +259,7 @@ def reduce_2d(X, method="umap"):
     return PCA(n_components=2, random_state=42).fit_transform(X)
 
 
-def viz_embeddings(paths, checkpoint, model_name, device, batch_size, method, out_png):
-    logger.info("Extracting features and computing 2D embedding...")
-    # class names and count
+def viz_embeddings(paths, checkpoint, model_name, device, batch_size, method, out_png, color_by="auto"):
     num_classes = int(getattr(config, "OUTPUT_FEATURES", 3))
     class_names = getattr(config, "CLASS_NAMES", [str(i) for i in range(num_classes)])
 
@@ -274,55 +272,97 @@ def viz_embeddings(paths, checkpoint, model_name, device, batch_size, method, ou
     extractor = get_feature_extractor(model)
 
     feats_list, lbls_list, proc_paths = [], [], []
-    for bt, bl, bp in tqdm(load_and_normalize(paths, tfm, device, batch_size)):
-        f = extractor(bt).detach().cpu().numpy()
+    preds_list = []
+
+    for bt, bl, bp in load_and_normalize(paths, tfm, device, batch_size):
+        with torch.no_grad():
+            # logits for predictions
+            logits = model(bt)  # [B, C]
+            preds = logits.argmax(dim=1).cpu().numpy().tolist()
+            # features for embedding
+            f = extractor(bt).detach().cpu().numpy()
+
         feats_list.append(f)
         lbls_list += bl
+        preds_list += preds
         proc_paths.extend(bp)
 
     if not feats_list:
         logger.error("No features extracted.");
         return
 
-    X = np.concatenate(feats_list, axis=0)
-    y = np.array(lbls_list)
-    assert len(proc_paths) == X.shape[0] == y.shape[0], "paths/features/labels length mismatch"
+    X = np.concatenate(feats_list, axis=0)  # [N, D]
+    y_lbl = np.array(lbls_list)  # ground truth (may be -1)
+    y_pred = np.array(preds_list)  # model predictions (0..C-1)
+    assert len(proc_paths) == X.shape[0] == y_lbl.shape[0] == y_pred.shape[0]
 
-    # Filter unknown labels (-1) if present
-    mask = y != -1
-    if mask.any():
-        X_plot, y_plot = X[mask], y[mask]
+    # Choose coloring
+    if color_by == "label":
+        labels_plot = y_lbl
+        legend_names = class_names + ["unlabeled"]
+        # keep all points; matplotlib needs an unlabeled bucket
+    elif color_by == "pred":
+        labels_plot = y_pred
+        legend_names = class_names
+    else:  # auto
+        if np.any(y_lbl != -1):
+            labels_plot = y_lbl
+            legend_names = class_names + ["unlabeled"]
+        else:
+            labels_plot = y_pred
+            legend_names = class_names
+
+    # 2D reduction on ALL processed samples (don’t drop unlabeled)
+    Z = reduce_2d(X, method=method)  # [N,2]
+
+    # ---- Plotly (interactive) ----
+    # Map -1 to "unlabeled" only when plotting ground-truth labels
+    if labels_plot is y_lbl:
+        label_text = [class_names[i] if (0 <= i < len(class_names)) else "unlabeled" for i in labels_plot]
+        label_idx_for_df = labels_plot  # can include -1
     else:
-        X_plot, y_plot = X, y
+        label_text = [class_names[i] for i in labels_plot]
+        label_idx_for_df = labels_plot
 
-    Z = reduce_2d(X_plot, method=method)  # [N,2]
-
-    # filtered_paths = [p for (p, keep) in zip(paths, (y != -1)) if keep] if (y == -1).any() else paths
-    paths_plot = [p for p, keep in zip(proc_paths, mask) if keep] if mask.any() else proc_paths
     save_plotly_embed(
         Z=Z,
-        labels=y_plot,
-        paths=paths_plot,
+        labels=label_idx_for_df,
+        paths=proc_paths,
         class_names=class_names,
         out_html=out_png.replace('.png', '.html') if out_png else "embedding_map.html",
-        title="Embedding map (interactive)"
+        title=f"Embedding map (interactive) — colored by {'labels' if labels_plot is y_lbl else 'predictions'}"
     )
 
-    # Plot
+    # ---- Matplotlib (static) ----
     plt.figure(figsize=(8, 7))
-    # color by class
     cmap = plt.cm.get_cmap('tab10', num_classes)
-    for ci in range(num_classes):
-        sel = (y_plot == ci)
-        if sel.any():
-            plt.scatter(Z[sel, 0], Z[sel, 1], s=10, alpha=0.7, label=class_names[ci], c=[cmap(ci)])
+
+    if labels_plot is y_lbl:
+        # draw labeled classes
+        for ci in range(num_classes):
+            sel = (labels_plot == ci)
+            if sel.any():
+                plt.scatter(Z[sel, 0], Z[sel, 1], s=10, alpha=0.7, label=class_names[ci], c=[cmap(ci)])
+        # draw unlabeled (=-1) in gray
+        unl = (labels_plot == -1)
+        if unl.any():
+            plt.scatter(Z[unl, 0], Z[unl, 1], s=10, alpha=0.6, label="unlabeled", c=["#999999"])
+        title_suffix = "colored by labels"
+    else:
+        # colored by predictions
+        for ci in range(num_classes):
+            sel = (labels_plot == ci)
+            if sel.any():
+                plt.scatter(Z[sel, 0], Z[sel, 1], s=10, alpha=0.7, label=class_names[ci], c=[cmap(ci)])
+        title_suffix = "colored by predictions"
+
     plt.legend(markerscale=2, fontsize=9, loc="best")
-    plt.title(f"Embedding map ({method.upper()})")
-    plt.xlabel("dim-1")
+    plt.title(f"Embedding map ({method.upper()}) — {title_suffix}")
+    plt.xlabel("dim-1");
     plt.ylabel("dim-2")
     plt.tight_layout()
     if out_png:
-        plt.savefig(out_png, dpi=180)
+        plt.savefig(out_png, dpi=180);
         print(f"[saved] {out_png}")
     else:
         plt.show()
@@ -345,6 +385,8 @@ def main():
     ap.add_argument("-l", "--limit", type=int, default=None)
     ap.add_argument("--method", default="umap", choices=["umap", "tsne", "pca"],
                     help="Dimensionality reduction for --mode embed")
+    ap.add_argument("--color_by", default="auto", choices=["auto", "label", "pred"],
+                    help="Color points by: ground-truth 'label', model 'pred', or 'auto' (use label if present else pred).")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -362,7 +404,7 @@ def main():
         if not args.checkpoint or not args.model_name:
             logger.error("--mode embed requires --checkpoint and --model_name")
             sys.exit(1)
-        viz_embeddings(paths, args.checkpoint, args.model_name, device, args.batch_size, args.method, args.output_png)
+        viz_embeddings(paths, args.checkpoint, args.model_name, device, args.batch_size, args.method, args.output_png, color_by=args.color_by)
 
 
 if __name__ == "__main__":
