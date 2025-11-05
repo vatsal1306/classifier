@@ -349,6 +349,8 @@ def main():
         logger.error("No images found.")
         sys.exit(1)
 
+    os.makedirs(os.path.dirname(args.output_png), exist_ok=True)
+
     if args.mode == "stats":
         viz_norm_stats(paths, device, args.batch_size, args.output_png)
     else:
