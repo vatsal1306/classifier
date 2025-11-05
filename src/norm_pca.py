@@ -13,6 +13,7 @@ sys.path.insert(0, root)
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from sklearn.manifold import TSNE
+from tqdm import tqdm
 import cv2
 import numpy as np
 import pandas as pd
@@ -160,7 +161,7 @@ def viz_norm_stats(paths, device, batch_size, out_png):
     tfm = get_test_transforms()
     means, stds, labels = [], [], []
 
-    for bt, bl, bp in load_and_normalize(paths, tfm, device, batch_size):
+    for bt, bl, bp in tqdm(load_and_normalize(paths, tfm, device, batch_size)):
         # bt is normalized already (Imagenet). Compute per-image per-channel stats in normalized space.
         # Convert CHW -> NCHW stats
         b = bt.detach().cpu().numpy()  # [B,3,224,224]
@@ -271,7 +272,7 @@ def viz_embeddings(paths, checkpoint, model_name, device, batch_size, method, ou
     extractor = get_feature_extractor(model)
 
     feats_list, lbls_list = [], []
-    for bt, bl, bp in load_and_normalize(paths, tfm, device, batch_size):
+    for bt, bl, bp in tqdm(load_and_normalize(paths, tfm, device, batch_size)):
         f = extractor(bt).detach().cpu().numpy()
         feats_list.append(f)
         lbls_list += bl
